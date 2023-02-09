@@ -89,7 +89,8 @@ public class FeignAcceptEncodingTests {
 		@Bean
 		public ServiceInstanceListSupplier staticServiceInstanceListSupplier() {
 			return ServiceInstanceListSuppliers.from("local",
-					new DefaultServiceInstance("local-1", "local", "localhost", port, false));
+				new DefaultServiceInstance("local-2", "local-2", "localhost", port, false),
+					new DefaultServiceInstance("local-1", "local-1", "localhost", port, false));
 		}
 
 	}
