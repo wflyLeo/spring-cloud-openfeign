@@ -33,8 +33,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import javax.servlet.http.HttpServletRequest;
-
 /**
  * An sample REST controller, that potentially returns large response - used for testing.
  *
@@ -76,7 +74,7 @@ public class InvoiceResource {
 	@RequestMapping(value = "invoicesSortedWithBody", method = RequestMethod.POST,
 			consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<Page<Invoice>> getInvoicesSortedWithBody(org.springframework.data.domain.Sort sort,
-																   @RequestBody String titlePrefix, HttpServletRequest req) {
+			@RequestBody String titlePrefix) {
 		Page<Invoice> page = new PageImpl<>(createInvoiceList(titlePrefix, 100, sort), PageRequest.of(0, 100, sort),
 				100);
 		return ResponseEntity.ok(page);

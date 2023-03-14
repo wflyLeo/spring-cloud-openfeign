@@ -17,12 +17,8 @@
 package org.springframework.cloud.openfeign.clientconfig;
 
 import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.concurrent.BlockingDeque;
-import java.util.concurrent.LinkedBlockingDeque;
 
 import javax.annotation.PreDestroy;
 
@@ -58,7 +54,7 @@ public class HttpClientFeignConfiguration {
 	private static final Log LOG = LogFactory.getLog(HttpClientFeignConfiguration.class);
 
 	private final Timer connectionManagerTimer = new Timer("FeignApacheHttpClientConfiguration.connectionManagerTimer",
-		true);
+			true);
 
 	private CloseableHttpClient httpClient;
 
@@ -68,12 +64,12 @@ public class HttpClientFeignConfiguration {
 	@Bean
 	@ConditionalOnMissingBean(HttpClientConnectionManager.class)
 	public HttpClientConnectionManager connectionManager(
-		ApacheHttpClientConnectionManagerFactory connectionManagerFactory,
-		FeignHttpClientProperties httpClientProperties) {
+			ApacheHttpClientConnectionManagerFactory connectionManagerFactory,
+			FeignHttpClientProperties httpClientProperties) {
 		final HttpClientConnectionManager connectionManager = connectionManagerFactory.newConnectionManager(
-			httpClientProperties.isDisableSslValidation(), httpClientProperties.getMaxConnections(),
-			httpClientProperties.getMaxConnectionsPerRoute(), httpClientProperties.getTimeToLive(),
-			httpClientProperties.getTimeToLiveUnit(), this.registryBuilder);
+				httpClientProperties.isDisableSslValidation(), httpClientProperties.getMaxConnections(),
+				httpClientProperties.getMaxConnectionsPerRoute(), httpClientProperties.getTimeToLive(),
+				httpClientProperties.getTimeToLiveUnit(), this.registryBuilder);
 		this.connectionManagerTimer.schedule(new TimerTask() {
 			@Override
 			public void run() {
@@ -86,7 +82,7 @@ public class HttpClientFeignConfiguration {
 	@Bean
 	@ConditionalOnProperty(value = "feign.compression.response.enabled", havingValue = "true")
 	public CloseableHttpClient customHttpClient(HttpClientConnectionManager httpClientConnectionManager,
-												FeignHttpClientProperties httpClientProperties) {
+			FeignHttpClientProperties httpClientProperties) {
 		HttpClientBuilder builder = HttpClientBuilder.create().disableCookieManagement().useSystemProperties();
 		this.httpClient = createClient(builder, httpClientConnectionManager, httpClientProperties);
 		return this.httpClient;
@@ -95,19 +91,19 @@ public class HttpClientFeignConfiguration {
 	@Bean
 	@ConditionalOnProperty(value = "feign.compression.response.enabled", havingValue = "false", matchIfMissing = true)
 	public CloseableHttpClient httpClient(ApacheHttpClientFactory httpClientFactory,
-										  HttpClientConnectionManager httpClientConnectionManager, FeignHttpClientProperties httpClientProperties) {
+			HttpClientConnectionManager httpClientConnectionManager, FeignHttpClientProperties httpClientProperties) {
 		this.httpClient = createClient(httpClientFactory.createBuilder(), httpClientConnectionManager,
-			httpClientProperties);
+				httpClientProperties);
 		return this.httpClient;
 	}
 
 	private CloseableHttpClient createClient(HttpClientBuilder builder,
-											 HttpClientConnectionManager httpClientConnectionManager, FeignHttpClientProperties httpClientProperties) {
+			HttpClientConnectionManager httpClientConnectionManager, FeignHttpClientProperties httpClientProperties) {
 		RequestConfig defaultRequestConfig = RequestConfig.custom()
-			.setConnectTimeout(httpClientProperties.getConnectionTimeout())
-			.setRedirectsEnabled(httpClientProperties.isFollowRedirects()).build();
+				.setConnectTimeout(httpClientProperties.getConnectionTimeout())
+				.setRedirectsEnabled(httpClientProperties.isFollowRedirects()).build();
 		CloseableHttpClient httpClient = builder.setDefaultRequestConfig(defaultRequestConfig)
-			.setConnectionManager(httpClientConnectionManager).build();
+				.setConnectionManager(httpClientConnectionManager).build();
 		return httpClient;
 	}
 
@@ -117,40 +113,12 @@ public class HttpClientFeignConfiguration {
 		if (this.httpClient != null) {
 			try {
 				this.httpClient.close();
-			} catch (IOException e) {
+			}
+			catch (IOException e) {
 				if (LOG.isErrorEnabled()) {
 					LOG.error("Could not correctly close httpClient.");
 				}
 			}
-		}
-	}
-
-	public static void main(String[] args) throws InterruptedException {
-		Timer timer = new Timer("test timer", true);
-		timer.scheduleAtFixedRate(new TimerTask() {
-			@Override
-			public void run() {
-				System.out.println(dateStr() + " 123");
-			}
-		}, 1, 3000);
-		timer.scheduleAtFixedRate(new TimerTask() {
-			@Override
-			public void run() {
-				System.out.println(dateStr() + " 456");
-			}
-		}, 1, 5000);
-		new LinkedBlockingDeque<>().take();
-	}
-
-	public static String dateStr() {
-		return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
-	}
-
-	public static void sleep(long millis) {
-		try {
-			Thread.sleep(millis);
-		} catch (InterruptedException e) {
-			e.printStackTrace();
 		}
 	}
 
