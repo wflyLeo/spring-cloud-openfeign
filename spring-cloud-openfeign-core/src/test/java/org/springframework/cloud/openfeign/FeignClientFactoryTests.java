@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import org.junit.jupiter.api.condition.JRE;
 
 import org.springframework.boot.test.context.assertj.AssertableApplicationContext;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.cloud.client.loadbalancer.LoadBalancerProperties;
+import org.springframework.cloud.client.loadbalancer.LoadBalancerClientsProperties;
 import org.springframework.cloud.loadbalancer.blocking.client.BlockingLoadBalancerClient;
 import org.springframework.cloud.loadbalancer.config.LoadBalancerAutoConfiguration;
 import org.springframework.cloud.loadbalancer.support.LoadBalancerClientFactory;
@@ -39,10 +39,9 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.web.bind.annotation.RequestMethod.GET;
 
 /**
  * @author Spencer Gibb
@@ -53,9 +52,10 @@ public class FeignClientFactoryTests {
 	public void testChildContexts() {
 		AnnotationConfigApplicationContext parent = new AnnotationConfigApplicationContext();
 		parent.refresh();
-		FeignContext context = new FeignContext();
+		FeignClientFactory context = new FeignClientFactory();
 		context.setApplicationContext(parent);
-		context.setConfigurations(Arrays.asList(getSpec("foo", FooConfig.class), getSpec("bar", BarConfig.class)));
+		context.setConfigurations(
+				Arrays.asList(getSpec("foo", null, FooConfig.class), getSpec("bar", null, BarConfig.class)));
 
 		Foo foo = context.getInstance("foo", Foo.class);
 		assertThat(foo).as("foo was null").isNotNull();
@@ -84,13 +84,13 @@ public class FeignClientFactoryTests {
 		assertThat(client).isInstanceOf(Client.Default.class);
 	}
 
-	private FeignClientSpecification getSpec(String name, Class<?> configClass) {
-		return new FeignClientSpecification(name, new Class[] { configClass });
+	private FeignClientSpecification getSpec(String name, String className, Class<?> configClass) {
+		return new FeignClientSpecification(name, className, new Class[] { configClass });
 	}
 
 	interface TestType {
 
-		@RequestMapping(value = "/", method = GET)
+		@GetMapping("/")
 		String hello();
 
 	}
@@ -100,15 +100,15 @@ public class FeignClientFactoryTests {
 
 		@Bean
 		BlockingLoadBalancerClient loadBalancerClient() {
-			return new BlockingLoadBalancerClient(new LoadBalancerClientFactory(), new LoadBalancerProperties());
+			return new BlockingLoadBalancerClient(new LoadBalancerClientFactory(new LoadBalancerClientsProperties()));
 		}
 
 		@Bean
-		FeignContext feignContext() {
-			FeignContext feignContext = new FeignContext();
-			feignContext.setConfigurations(Collections.singletonList(
-					new FeignClientSpecification("test", new Class[] { LoadBalancerAutoConfiguration.class })));
-			return feignContext;
+		FeignClientFactory feignContext() {
+			FeignClientFactory feignClientFactory = new FeignClientFactory();
+			feignClientFactory.setConfigurations(Collections.singletonList(
+					new FeignClientSpecification("test", null, new Class[] { LoadBalancerAutoConfiguration.class })));
+			return feignClientFactory;
 		}
 
 		@Bean

@@ -52,10 +52,13 @@ public interface StoreClient {
 
 	@RequestMapping(method = RequestMethod.POST, value = "/stores/{storeId}", consumes = "application/json")
 	Store update(@PathVariable("storeId") Long storeId, Store store);
+
+	@RequestMapping(method = RequestMethod.DELETE, value = "/stores/{storeId:\\d+}")
+	void delete(@PathVariable Long storeId);
 }
 ----
 
-In the `@FeignClient` annotation the String value ("stores" above) is an arbitrary client name, which is used to create a https://github.com/spring-cloud/spring-cloud-commons/blob/master/spring-cloud-loadbalancer/src/main/java/org/springframework/cloud/loadbalancer/blocking/client/BlockingLoadBalancerClient.java[Spring Cloud LoadBalancer client].
+In the `@FeignClient` annotation the String value ("stores" above) is an arbitrary client name, which is used to create a https://github.com/spring-cloud/spring-cloud-commons/blob/main/spring-cloud-loadbalancer/src/main/java/org/springframework/cloud/loadbalancer/blocking/client/BlockingLoadBalancerClient.java[Spring Cloud LoadBalancer client].
 You can also specify a URL using the `url` attribute
 (absolute value or just a hostname). The name of the bean in the
 application context is the fully qualified name of the interface.
@@ -66,9 +69,23 @@ The load-balancer client above will want to discover the physical addresses
 for the "stores" service. If your application is a Eureka client then
 it will resolve the service in the Eureka service registry. If you
 don't want to use Eureka, you can configure a list of servers
-in your external configuration using https://cloud.spring.io/spring-cloud-static/spring-cloud-commons/current/reference/html/#simplediscoveryclient[`SimpleDiscoveryClient`].
+in your external configuration using https://docs.spring.io/spring-cloud-commons/docs/current/reference/html/#simplediscoveryclient[`SimpleDiscoveryClient`].
 
 Spring Cloud OpenFeign supports all the features available for the blocking mode of Spring Cloud LoadBalancer. You can read more about them in the https://docs.spring.io/spring-cloud-commons/docs/current/reference/html/#spring-cloud-loadbalancer[project documentation].
+
+TIP: To use `@EnableFeignClients` annotation on `@Configuration`-annotated-classes, make sure to specify where the clients are located, for example:
+`@EnableFeignClients(basePackages = "com.example.clients")`
+or list them explicitly:
+`@EnableFeignClients(clients = InventoryServiceFeignClient.class)`
+
+[[attribute-resolution-mode]]
+==== Attribute resolution mode
+
+While creating `Feign` client beans, we resolve the values passed via the `@FeignClient` annotation. As of `4.x`, the values are being resolved eagerly. This is a good solution for most use-cases, and it also allows for AOT support.
+
+If you need the attributes to be resolved lazily, set the `spring.cloud.openfeign.lazy-attributes-resolution` property value to `true`.
+
+TIP: For Spring Cloud Contract test integration, lazy attribute resolution should be used.
 
 [[spring-cloud-feign-overriding-defaults]]
 === Overriding Feign Defaults
@@ -113,16 +130,22 @@ Spring Cloud OpenFeign provides the following beans by default for feign (`BeanT
 * `Decoder` feignDecoder: `ResponseEntityDecoder` (which wraps a `SpringDecoder`)
 * `Encoder` feignEncoder: `SpringEncoder`
 * `Logger` feignLogger: `Slf4jLogger`
-* `MicrometerCapability` micrometerCapability: If `feign-micrometer` is on the classpath and `MeterRegistry` is available
+* `MicrometerObservationCapability` micrometerObservationCapability: If `feign-micrometer` is on the classpath and `ObservationRegistry` is available
+* `MicrometerCapability` micrometerCapability: If `feign-micrometer` is on the classpath, `MeterRegistry` is available and `ObservationRegistry` is not available
+* `CachingCapability` cachingCapability: If `@EnableCaching` annotation is used. Can be disabled via `spring.cloud.openfeign.cache.enabled`.
 * `Contract` feignContract: `SpringMvcContract`
 * `Feign.Builder` feignBuilder: `FeignCircuitBreaker.Builder`
 * `Client` feignClient: If Spring Cloud LoadBalancer is on the classpath, `FeignBlockingLoadBalancerClient` is used.
 If none of them is on the classpath, the default feign client is used.
 
-NOTE: `spring-cloud-starter-openfeign` supports `spring-cloud-starter-loadbalancer`. However, as is an optional dependency, you need to make sure it been added to your project if you want to use it.
+NOTE: `spring-cloud-starter-openfeign` supports `spring-cloud-starter-loadbalancer`. However, as is an optional dependency, you need to make sure it has been added to your project if you want to use it.
 
-The OkHttpClient and ApacheHttpClient and ApacheHC5 feign clients can be used by setting `feign.okhttp.enabled` or `feign.httpclient.enabled` or `feign.httpclient.hc5.enabled` to `true`, respectively, and having them on the classpath.
-You can customize the HTTP client used by providing a bean of either `org.apache.http.impl.client.CloseableHttpClient` when using Apache or `okhttp3.OkHttpClient` when using OK HTTP or `org.apache.hc.client5.http.impl.classic.CloseableHttpClient` when using Apache HC5.
+The OkHttpClient and Apache HttpClient 5 Feign clients can be used by setting `spring.cloud.openfeign.okhttp.enabled` or `spring.cloud.openfeign.httpclient.hc5.enabled` to `true`, respectively, and having them on the classpath.
+You can customize the HTTP client used by providing a bean of either `org.apache.hc.client5.http.impl.classic.CloseableHttpClient` when using Apache HC5.
+
+You can further customise http clients by setting values in the `spring.cloud.openfeign.httpclient.xxx` properties. The ones prefixed just with `httpclient` will work for all the clients, the ones prefixed with `httpclient.hc5` to Apache HttpClient 5 and the ones prefixed with `httpclient.okhttp` to OkHttpClient. You can find a full list of properties you can customise in the appendix.
+
+TIP: Starting with Spring Cloud OpenFeign 4, the Feign Apache HttpClient 4 is no longer supported. We suggest using Apache HttpClient 5 instead.
 
 Spring Cloud OpenFeign _does not_ provide the following beans by default for feign, but still looks up beans of these types from the application context to create the feign client:
 
@@ -133,7 +156,7 @@ Spring Cloud OpenFeign _does not_ provide the following beans by default for fei
 * `Collection<RequestInterceptor>`
 * `SetterFactory`
 * `QueryMapEncoder`
-* `Capability` (`MicrometerCapability` is provided by default)
+* `Capability` (`MicrometerObservationCapability` and `CachingCapability` are provided by default)
 
 A bean of `Retryer.NEVER_RETRY` with the type `Retryer` is created by default, which will disable retrying.
 Notice this retrying behavior is different from the Feign default one, where it will automatically retry IOExceptions,
@@ -164,53 +187,62 @@ This replaces the `SpringMvcContract` with `feign.Contract.Default` and adds a `
 application.yml
 [source,yaml]
 ----
-feign:
-	client:
-		config:
-			feignName:
-				connectTimeout: 5000
-				readTimeout: 5000
-				loggerLevel: full
-				errorDecoder: com.example.SimpleErrorDecoder
-				retryer: com.example.SimpleRetryer
-				defaultQueryParameters:
-					query: queryValue
-				defaultRequestHeaders:
-					header: headerValue
-				requestInterceptors:
-					- com.example.FooRequestInterceptor
-					- com.example.BarRequestInterceptor
-				decode404: false
-				encoder: com.example.SimpleEncoder
-				decoder: com.example.SimpleDecoder
-				contract: com.example.SimpleContract
-				capabilities:
-					- com.example.FooCapability
-					- com.example.BarCapability
-				metrics.enabled: false
+spring:
+	cloud:
+		openfeign:
+			client:
+				config:
+					feignName:
+                        url: http://remote-service.com
+						connectTimeout: 5000
+						readTimeout: 5000
+						loggerLevel: full
+						errorDecoder: com.example.SimpleErrorDecoder
+						retryer: com.example.SimpleRetryer
+						defaultQueryParameters:
+							query: queryValue
+						defaultRequestHeaders:
+							header: headerValue
+						requestInterceptors:
+							- com.example.FooRequestInterceptor
+							- com.example.BarRequestInterceptor
+						responseInterceptor: com.example.BazResponseInterceptor
+						dismiss404: false
+						encoder: com.example.SimpleEncoder
+						decoder: com.example.SimpleDecoder
+						contract: com.example.SimpleContract
+						capabilities:
+							- com.example.FooCapability
+							- com.example.BarCapability
+						queryMapEncoder: com.example.SimpleQueryMapEncoder
+						micrometer.enabled: false
 ----
+`feignName` in this example refers to `@FeignClient` `value`, that is also aliased with `@FeginClient` `name` and `@FeignClient` `contextId`. In a load-balanced scenario, it also corresponds to the `serviceId` of the server app that will be used to retrieve the instances.
+
 
 Default configurations can be specified in the `@EnableFeignClients` attribute `defaultConfiguration` in a similar manner as described above. The difference is that this configuration will apply to _all_ feign clients.
 
-If you prefer using configuration properties to configured all `@FeignClient`, you can create configuration properties with `default` feign name.
+If you prefer using configuration properties to configure all `@FeignClient`, you can create configuration properties with `default` feign name.
 
-You can use `feign.client.config.feignName.defaultQueryParameters` and `feign.client.config.feignName.defaultRequestHeaders` to specify query parameters and headers that will be sent with every request of the client named `feignName`.
+You can use `spring.cloud.openfeign.client.config.feignName.defaultQueryParameters` and `spring.cloud.openfeign.client.config.feignName.defaultRequestHeaders` to specify query parameters and headers that will be sent with every request of the client named `feignName`.
 
 application.yml
 [source,yaml]
 ----
-feign:
-	client:
-		config:
-			default:
-				connectTimeout: 5000
-				readTimeout: 5000
-				loggerLevel: basic
+spring:
+	cloud:
+		openfeign:
+			client:
+				config:
+					default:
+						connectTimeout: 5000
+						readTimeout: 5000
+						loggerLevel: basic
 ----
 
 If we create both `@Configuration` bean and configuration properties, configuration properties will win.
 It will override `@Configuration` values. But if you want to change the priority to `@Configuration`,
-you can change `feign.client.default-to-properties` to `false`.
+you can change `spring.cloud.openfeign.client.default-to-properties` to `false`.
 
 If we want to create multiple feign clients with the same name or url
 so that they would point to the same server but each with a different custom configuration then
@@ -256,13 +288,13 @@ public FeignClientConfigurer feignClientConfigurer() {
 }
 ----
 
-TIP: By default, Feign clients do not encode slash `/` characters. You can change this behaviour, by setting the value of `feign.client.decodeSlash` to `false`.
+TIP: By default, Feign clients do not encode slash `/` characters. You can change this behaviour, by setting the value of `spring.cloud.openfeign.client.decodeSlash` to `false`.
 
 ==== `SpringEncoder` configuration
 
 In the `SpringEncoder` that we provide, we set `null` charset for binary content types and `UTF-8` for all the other ones.
 
-You can modify this behaviour to derive the charset from the `Content-Type` header charset instead by setting the value of `feign.encoder.charset-from-content-type` to `true`.
+You can modify this behaviour to derive the charset from the `Content-Type` header charset instead by setting the value of `spring.cloud.openfeign.encoder.charset-from-content-type` to `true`.
 
 [[timeout-handling]]
 === Timeout Handling
@@ -292,12 +324,12 @@ class FooController {
 	private FooClient adminClient;
 
 	@Autowired
-	public FooController(Client client, Encoder encoder, Decoder decoder, Contract contract, MicrometerCapability micrometerCapability) {
+	public FooController(Client client, Encoder encoder, Decoder decoder, Contract contract, MicrometerObservationCapability micrometerObservationCapability) {
 		this.fooClient = Feign.builder().client(client)
 				.encoder(encoder)
 				.decoder(decoder)
 				.contract(contract)
-				.addCapability(micrometerCapability)
+				.addCapability(micrometerObservationCapability)
 				.requestInterceptor(new BasicAuthRequestInterceptor("user", "user"))
 				.target(FooClient.class, "https://PROD-SVC");
 
@@ -305,7 +337,7 @@ class FooController {
 				.encoder(encoder)
 				.decoder(decoder)
 				.contract(contract)
-				.addCapability(micrometerCapability)
+				.addCapability(micrometerObservationCapability)
 				.requestInterceptor(new BasicAuthRequestInterceptor("admin", "admin"))
 				.target(FooClient.class, "https://PROD-SVC");
 	}
@@ -327,7 +359,7 @@ You can do this by overriding calling `inheritParentContext(false)` on the `Buil
 [[spring-cloud-feign-circuitbreaker]]
 === Feign Spring Cloud CircuitBreaker Support
 
-If Spring Cloud CircuitBreaker is on the classpath and `feign.circuitbreaker.enabled=true`, Feign will wrap all methods with a circuit breaker.
+If Spring Cloud CircuitBreaker is on the classpath and `spring.cloud.openfeign.circuitbreaker.enabled=true`, Feign will wrap all methods with a circuit breaker.
 
 To disable Spring Cloud CircuitBreaker support on a per-client basis create a vanilla `Feign.Builder` with the "prototype" scope, e.g.:
 
@@ -343,10 +375,66 @@ public class FooConfiguration {
 }
 ----
 
-The circuit breaker name follows this pattern `<feignClientName>#<calledMethod>`. When calling a `@FeignClient` with name `foo` and the called interface method is `bar` then the circuit breaker name will be `foo_bar`.
+The circuit breaker name follows this pattern `<feignClientClassName>#<calledMethod>(<parameterTypes>)`. When calling a `@FeignClient` with `FooClient` interface and the called interface method that has no parameters is `bar` then the circuit breaker name will be `FooClient#bar()`.
 
-To enable Spring Cloud CircuitBreaker group set the `feign.circuitbreaker.group.enabled` property to `true` (by default `false`).
+NOTE: As of 2020.0.2, the circuit breaker name pattern has changed from `<feignClientName>_<calledMethod>`.
+Using `CircuitBreakerNameResolver` introduced in 2020.0.4, circuit breaker names can retain the old pattern.
 
+Providing a bean of `CircuitBreakerNameResolver`, you can change the circuit breaker name pattern.
+[source,java,indent=0]
+----
+@Configuration
+public class FooConfiguration {
+	@Bean
+	public CircuitBreakerNameResolver circuitBreakerNameResolver() {
+		return (String feignClientName, Target<?> target, Method method) -> feignClientName + "_" + method.getName();
+	}
+}
+----
+
+To enable Spring Cloud CircuitBreaker group set the `spring.cloud.openfeign.circuitbreaker.group.enabled` property to `true` (by default `false`).
+
+[[spring-clou-feign-circuitbreaker-configurationproperties]]
+=== Configuring CircuitBreakers With Configuration Properties
+
+You can configure CircuitBreakers via configuration properties.
+
+For example, if you had this Feign client
+
+[source,java,indent=0]
+----
+@FeignClient(url = "http://localhost:8080")
+public interface DemoClient {
+
+    @GetMapping("demo")
+    String getDemo();
+}
+----
+
+You could configure it using configuration properties by doing the following
+
+[source,yaml,indent=0]
+----
+spring:
+  cloud:
+    openfeign
+      circuitbreaker:
+        enabled: true
+        alphanumeric-ids:
+          enabled: true
+resilience4j:
+  circuitbreaker:
+    instances:
+      DemoClientgetDemo:
+        minimumNumberOfCalls: 69
+  timelimiter:
+    instances:
+      DemoClientgetDemo:
+        timeoutDuration: 10s
+----
+
+NOTE: If you want to switch back to the circuit breaker names used prior to Spring Cloud
+2022.0.0 you can set `spring.cloud.openfeign.circuitbreaker.alphanumeric-ids.enabled` to `false`.
 
 [[spring-cloud-feign-circuitbreaker-fallback]]
 === Feign Spring Cloud CircuitBreaker Fallbacks
@@ -471,10 +559,7 @@ public interface UserClient extends UserService {
 }
 ----
 
-NOTE: It is generally not advisable to share an interface between a
-server and a client. It introduces tight coupling, and also actually
-doesn't work with Spring MVC in its current form (method parameter
-mapping is not inherited).
+WARNING: `@FeignClient` interfaces should not be shared between server and client and annotating `@FeignClient` interfaces with `@RequestMapping` on class level is no longer supported.
 
 === Feign request/response compression
 
@@ -483,32 +568,26 @@ Feign requests. You can do this by enabling one of the properties:
 
 [source,java]
 ----
-feign.compression.request.enabled=true
-feign.compression.response.enabled=true
+spring.cloud.openfeign.compression.request.enabled=true
+spring.cloud.openfeign.compression.response.enabled=true
 ----
 
 Feign request compression gives you settings similar to what you may set for your web server:
 
 [source,java]
 ----
-feign.compression.request.enabled=true
-feign.compression.request.mime-types=text/xml,application/xml,application/json
-feign.compression.request.min-request-size=2048
+spring.cloud.openfeign.compression.request.enabled=true
+spring.cloud.openfeign.compression.request.mime-types=text/xml,application/xml,application/json
+spring.cloud.openfeign.compression.request.min-request-size=2048
 ----
 
 These properties allow you to be selective about the compressed media types and minimum request threshold length.
 
-For http clients except OkHttpClient, default gzip decoder can be enabled to decode gzip response in UTF-8 encoding:
-
-[source,java]
-----
-feign.compression.response.enabled=true
-feign.compression.response.useGzipDecoder=true
-----
+TIP: Since the OkHttpClient uses "transparent" compression, that is disabled if the `content-encoding` or `accept-encoding` header is present, we do not enable compression when `feign.okhttp.OkHttpClient` is present on the classpath and `spring.cloud.openfeign.okhttp.enabled` is set to `true`.
 
 === Feign logging
 
-A logger is created for each Feign client created. By default the name of the logger is the full class name of the interface used to create the Feign client. Feign logging only responds to the `DEBUG` level.
+A logger is created for each Feign client created. By default, the name of the logger is the full class name of the interface used to create the Feign client. Feign logging only responds to the `DEBUG` level.
 
 .application.yml
 
@@ -540,7 +619,7 @@ public class FooConfiguration {
 === Feign Capability support
 
 The Feign capabilities expose core Feign components so that these components can be modified. For example, the capabilities can take the `Client`, _decorate_ it, and give the decorated instance back to Feign.
-The support for metrics libraries is a good real-life example for this. See <<feign-metrics>>.
+The support for Micrometer is a good real-life example for this. See <<micrometer-support>>.
 
 Creating one or more `Capability` beans and placing them in a `@FeignClient` configuration lets you register them and modify the behavior of the involved client.
 
@@ -555,29 +634,42 @@ public class FooConfiguration {
 }
 ----
 
-=== Feign metrics
+=== Micrometer Support
 
-If all of the following conditions are true, a `MicrometerCapability` bean is created and registered so that your Feign client publishes metrics to Micrometer:
+If all of the following conditions are true, a `MicrometerObservationCapability` bean is created and registered so that your Feign client is observable by Micrometer:
 
 * `feign-micrometer` is on the classpath
-* A `MeterRegistry` bean is available
-* feign metrics properties are set to `true` (by default)
-	- `feign.metrics.enabled=true` (for all clients)
-	- `feign.client.config.feignName.metrics.enabled=true` (for a single client)
+* A `ObservationRegistry` bean is available
+* feign micrometer properties are set to `true` (by default)
+	- `spring.cloud.openfeign.micrometer.enabled=true` (for all clients)
+	- `spring.cloud.openfeign.client.config.feignName.micrometer.enabled=true` (for a single client)
 
-NOTE: If your application already uses Micrometer, enabling metrics is as simple as putting `feign-micrometer` onto your classpath.
+NOTE: If your application already uses Micrometer, enabling this feature is as simple as putting `feign-micrometer` onto your classpath.
 
 You can also disable the feature by either:
 
 * excluding `feign-micrometer` from your classpath
-* setting one of the feign metrics properties to `false`
-	- `feign.metrics.enabled=false`
-	- `feign.client.config.feignName.metrics.enabled=false`
+* setting one of the feign micrometer properties to `false`
+	- `spring.cloud.openfeign.micrometer.enabled=false`
+	- `spring.cloud.openfeign.client.config.feignName.micrometer.enabled=false`
 
-NOTE: `feign.metrics.enabled=false` disables metrics support for *all* Feign clients regardless of the value of the client-level flags: `feign.client.config.feignName.metrics.enabled`.
-If you want to enable or disable merics per client, don't set `feign.metrics.enabled` and use `feign.client.config.feignName.metrics.enabled`.
+NOTE: `spring.cloud.openfeign.micrometer.enabled=false` disables Micrometer support for *all* Feign clients regardless of the value of the client-level flags: `spring.cloud.openfeign.client.config.feignName.micrometer.enabled`.
+If you want to enable or disable Micrometer support per client, don't set `spring.cloud.openfeign.micrometer.enabled` and use `spring.cloud.openfeign.client.config.feignName.micrometer.enabled`.
 
-You can also customize the `MicrometerCapability` by registering your own bean:
+You can also customize the `MicrometerObservationCapability` by registering your own bean:
+
+[source,java,indent=0]
+----
+@Configuration
+public class FooConfiguration {
+	@Bean
+	public MicrometerObservationCapability micrometerObservationCapability(ObservationRegistry registry) {
+		return new MicrometerObservationCapability(registry);
+	}
+}
+----
+
+It is still possible to use `MicrometerCapability` with Feign (metrics-only support), you need to disable Micrometer support (`spring.cloud.openfeign.micrometer.enabled=false`) and create a `MicrometerCapability` bean:
 
 [source,java,indent=0]
 ----
@@ -590,11 +682,23 @@ public class FooConfiguration {
 }
 ----
 
-=== Feign @QueryMap support
+=== Feign Caching
 
-The OpenFeign `@QueryMap` annotation provides support for POJOs to be used as
-GET parameter maps. Unfortunately, the default OpenFeign QueryMap annotation is
-incompatible with Spring because it lacks a `value` property.
+If `@EnableCaching` annotation is used, a `CachingCapability` bean is created and registered so that your Feign client recognizes `@Cache*` annotations on its interface:
+
+[source,java,indent=0]
+----
+public interface DemoClient {
+
+	@GetMapping("/demo/{filterParam}")
+    @Cacheable(cacheNames = "demo-cache", key = "#keyParam")
+	String demoEndpoint(String keyParam, @PathVariable String filterParam);
+}
+----
+
+You can also disable the feature via property `spring.cloud.openfeign.cache.enabled=false`.
+
+=== Feign @QueryMap support
 
 Spring Cloud OpenFeign provides an equivalent `@SpringQueryMap` annotation, which
 is used to annotate a POJO or Map parameter as a query parameter map.
@@ -677,23 +781,22 @@ public interface DemoTemplate {
 ----
 
 === Feign `CollectionFormat` support
-We support `feign.CollectionFormat` by providing the `@CollectionFormat` annotation.You can annotate a Feign client method with it by passing the desired `feign.CollectionFormat` as annotation value.
+We support `feign.CollectionFormat` by providing the `@CollectionFormat` annotation.
+You can annotate a Feign client method (or the whole class to affect all methods) with it by passing the desired `feign.CollectionFormat` as annotation value.
 
 In the following example, the `CSV` format is used instead of the default `EXPLODED` to process the method.
 
 [source,java,indent=0]
 ----
 @FeignClient(name = "demo")
-	protected interface PageableFeignClient {
+protected interface DemoFeignClient {
 
-		@CollectionFormat(feign.CollectionFormat.CSV)
-		@GetMapping(path = "/page")
-		ResponseEntity performRequest(Pageable page);
+    @CollectionFormat(feign.CollectionFormat.CSV)
+    @GetMapping(path = "/test")
+    ResponseEntity performRequest(String test);
 
-	}
+}
 ----
-
-TIP: Set the `CSV` format while sending `Pageable` as a query parameter in order for it to be encoded correctly.
 
 === Reactive Support
 As the https://github.com/OpenFeign/feign[OpenFeign project] does not currently support reactive clients, such as https://docs.spring.io/spring/docs/current/javadoc-api/org/springframework/web/reactive/function/client/WebClient.html[Spring WebClient], neither does Spring Cloud OpenFeign.We will add support for it here as soon as it becomes available in the core project.
@@ -708,28 +811,125 @@ To work around this problem you can use an `ObjectProvider` when autowiring your
 [source,java,indent=0]
 ----
 @Autowired
-ObjectProvider<TestFeginClient> testFeginClient;
+ObjectProvider<TestFeignClient> testFeignClient;
 ----
 
 === Spring Data Support
 
-You may consider enabling Jackson Modules for the support `org.springframework.data.domain.Page` and `org.springframework.data.domain.Sort` decoding.
+If Jackson Databind and Spring Data Commons are on the classpath, converters for `org.springframework.data.domain.Page` and `org.springframework.data.domain.Sort` will be added automatically.
 
+To disable this behaviour set
 [source,java]
 ----
-feign.autoconfiguration.jackson.enabled=true
+spring.cloud.openfeign.autoconfiguration.jackson.enabled=false
 ----
 
+See `org.springframework.cloud.openfeign.FeignAutoConfiguration.FeignJacksonConfiguration` for details.
+
 === Spring `@RefreshScope` Support
-If Feign client refresh is enabled, each feign client is created with `feign.Request.Options` as a refresh-scoped bean. This means properties such as `connectTimeout` and `readTimeout` can be refreshed against any Feign client instance through `POST /actuator/refresh`.
+If Feign client refresh is enabled, each Feign client is created with:
+
+* `feign.Request.Options` as a refresh-scoped bean. This means properties such as `connectTimeout` and `readTimeout` can be refreshed against any Feign client instance.
+* A url wrapped under `org.springframework.cloud.openfeign.RefreshableUrl`. This means the URL of Feign client, if defined
+with `spring.cloud.openfeign.client.config.{feignName}.url` property, can be refreshed against any Feign client instance.
+
+You can refresh these properties through `POST /actuator/refresh`.
 
 By default, refresh behavior in Feign clients is disabled. Use the following property to enable refresh behavior:
 [source,java]
 ----
-feign.client.refresh-enabled=true
+spring.cloud.openfeign.client.refresh-enabled=true
 ----
 TIP: DO NOT annotate the `@FeignClient` interface with the `@RefreshScope` annotation.
 
+=== OAuth2 Support
+OAuth2 support can be enabled by setting following flag:
+----
+spring.cloud.openfeign.oauth2.enabled=true
+----
+When the flag is set to true, and the oauth2 client context resource details are present, a bean of class `OAuth2AccessTokenInterceptor` is created. Before each request, the interceptor resolves the required access token and includes it as a header.
+`OAuth2AccessTokenInterceptor` uses the `OAuth2AuthorizedClientManager` to get `OAuth2AuthorizedClient` that holds an `OAuth2AccessToken`. If the user has specified an OAuth2 `clientRegistrationId` using the `spring.cloud.openfeign.oauth2.clientRegistrationId` property, it will be used to retrieve the token. If the token is not retrieved or the `clientRegistrationId` has not been specified, the `serviceId` retrieved from the `url` host segment will be used.
+
+TIP:: Using the `serviceId` as OAuth2 client registrationId is convenient for load-balanced Feign clients. For non-load-balanced ones, the property-based `clientRegistrationId` is a suitable approach.
+
+TIP:: If you do not want to use the default setup for the `OAuth2AuthorizedClientManager`, you can just instantiate a bean of this type in your configuration.
+
+=== Transform the load-balanced HTTP request
+
+You can use the selected `ServiceInstance` to transform the load-balanced HTTP Request.
+
+For `Request`, you need to implement and define `LoadBalancerFeignRequestTransformer`, as follows:
+
+[source,java,indent=0]
+----
+	@Bean
+	public LoadBalancerFeignRequestTransformer transformer() {
+		return new LoadBalancerFeignRequestTransformer() {
+
+			@Override
+			public Request transformRequest(Request request, ServiceInstance instance) {
+				Map<String, Collection<String>> headers = new HashMap<>(request.headers());
+				headers.put("X-ServiceId", Collections.singletonList(instance.getServiceId()));
+				headers.put("X-InstanceId", Collections.singletonList(instance.getInstanceId()));
+				return Request.create(request.httpMethod(), request.url(), headers, request.body(), request.charset(),
+						request.requestTemplate());
+			}
+		};
+	}
+----
+
+If multiple transformers are defined, they are applied in the order in which beans are defined.
+Alternatively, you can use `LoadBalancerFeignRequestTransformer.DEFAULT_ORDER` to specify the order.
+
+=== X-Forwarded Headers Support
+
+`X-Forwarded-Host` and `X-Forwarded-Proto` support can be enabled by setting following flag:
+
+[source,properties]
+----
+spring.cloud.loadbalancer.x-forwarded.enabled=true
+----
+
+=== Supported Ways To Provide URL To A Feign Client
+You can provide a URL to a Feign client in any of the following ways:
+
+|===
+|Case |Example |Details
+
+|The URL is provided in the `@FeignClient` annotation.
+|`@FeignClient(name="testClient", url="http://localhost:8081")`
+|The URL is resolved from the `url` attribute of the annotation, without load-balancing.
+
+|The URL is provided in the `@FeignClient` annotation and in the
+configuration properties.
+|`@FeignClient(name="testClient", url="http://localhost:8081")` and the property defined in `application.yml` as
+`spring.cloud.openfeign.client.config.testClient.url=http://localhost:8081`
+|The URL is resolved from the `url` attribute of the annotation, without load-balancing.
+The URL provided in the configuration properties remains unused.
+
+|The URL is not provided in the `@FeignClient` annotation but is provided in configuration properties.
+| `@FeignClient(name="testClient")` and the property defined in `application.yml` as
+`spring.cloud.openfeign.client.config.testClient.url=http://localhost:8081`
+|The URL is resolved from configuration properties, without load-balancing. If
+`spring.cloud.openfeign.client.refresh-enabled=true`, then the URL defined in configuration properties can be refreshed as described in <<Spring `@RefreshScope` Support,Spring RefreshScope Support>>.
+
+|The URL is neither provided in the `@FeignClient` annotation nor in configuration properties.
+|`@FeignClient(name="testClient")`
+|The URL is resolved from `name` attribute of annotation, with load balancing.
+
+|===
+
+=== AOT and Native Image Support
+
+Spring Cloud OpenFeign supports Spring AOT transformations and native images, however, only with refresh mode disabled, Feign clients refresh disabled (default setting) and <<attribute-resolution-mode,lazy `@FeignClient` attribute resolution>> disabled (default setting).
+
+WARNING: If you want to run Spring Cloud OpenFeign clients in AOT or native image modes, make sure to set `spring.cloud.refresh.enabled` to `false`.
+
+TIP: If you want to run Spring Cloud OpenFeign clients in AOT or native image modes, ensure `spring.cloud.openfeign.client.refresh-enabled` has not been set to `true`.
+
+TIP: If you want to run Spring Cloud OpenFeign clients in AOT or native image modes, ensure `spring.cloud.openfeign.lazy-attributes-resolution` has not been set to `true`.
+
+TIP:  However, if you set the `url` value via properties, it is possible to override the `@FeignClient` `url` value by running the image with `-Dspring.cloud.openfeign.client.config.[clientId].url=[url]` flag. In order to enable overriding, a `url` value also has to be set via properties and not `@FeignClient` attribute during buildtime.
 
 == Configuration properties
 

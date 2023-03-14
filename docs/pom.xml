@@ -6,8 +6,11 @@
 	<parent>
 		<groupId>org.springframework.cloud</groupId>
 		<artifactId>spring-cloud-openfeign</artifactId>
-		<version>3.0.3-SNAPSHOT</version>
+		<version>4.0.2-SNAPSHOT</version>
 	</parent>
+	<scm>
+		<url>https://github.com/spring-cloud/spring-cloud-openfeign</url>
+	</scm>
 	<artifactId>spring-cloud-openfeign-docs</artifactId>
 	<packaging>jar</packaging>
 	<name>Spring Cloud OpenFeign Docs</name>
@@ -17,6 +20,8 @@
 		<main.basedir>${basedir}/..</main.basedir>
 		<configprops.inclusionPattern>feign.*</configprops.inclusionPattern>
 		<upload-docs-zip.phase>deploy</upload-docs-zip.phase>
+		<!-- Don't upload docs jar to central / repo.spring.io -->
+		<maven-deploy-plugin-default.phase>none</maven-deploy-plugin-default.phase>
 	</properties>
 	<dependencies>
 		<dependency>

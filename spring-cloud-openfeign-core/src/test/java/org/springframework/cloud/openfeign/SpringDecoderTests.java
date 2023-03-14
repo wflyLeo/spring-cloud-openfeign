@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.web.server.LocalServerPort;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.cloud.openfeign.test.NoSecurityConfiguration;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -37,10 +37,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,20 +45,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * @author Spencer Gibb
  * @author Olga Maciaszek-Sharma
+ * @author Szymon Linowski
  */
-@RunWith(SpringJUnit4ClassRunner.class)
 @SpringBootTest(classes = SpringDecoderTests.Application.class, webEnvironment = WebEnvironment.RANDOM_PORT,
 		value = { "spring.application.name=springdecodertest", "spring.jmx.enabled=false" })
 @DirtiesContext
-public class SpringDecoderTests extends FeignClientFactoryBean {
+class SpringDecoderTests extends FeignClientFactoryBean {
 
 	@Autowired
-	FeignContext context;
+	FeignClientFactory context;
 
 	@LocalServerPort
 	private int port = 0;
 
-	public SpringDecoderTests() {
+	SpringDecoderTests() {
 		setName("test");
 		setContextId("test");
 	}
@@ -70,14 +67,14 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 		return testClient(false);
 	}
 
-	public TestClient testClient(boolean decode404) {
+	public TestClient testClient(boolean dismiss404) {
 		setType(this.getClass());
-		setDecode404(decode404);
+		setDismiss404(dismiss404);
 		return feign(this.context).target(TestClient.class, "http://localhost:" + this.port);
 	}
 
 	@Test
-	public void testResponseEntity() {
+	void testResponseEntity() {
 		ResponseEntity<Hello> response = testClient().getHelloResponse();
 		assertThat(response).as("response was null").isNotNull();
 		assertThat(response.getStatusCode()).as("wrong status code").isEqualTo(HttpStatus.OK);
@@ -87,14 +84,14 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 	}
 
 	@Test
-	public void testSimpleType() {
+	void testSimpleType() {
 		Hello hello = testClient().getHello();
 		assertThat(hello).as("hello was null").isNotNull();
 		assertThat(hello).as("first hello didn't match").isEqualTo(new Hello("hello world 1"));
 	}
 
 	@Test
-	public void testUserParameterizedTypeDecode() {
+	void testUserParameterizedTypeDecode() {
 		List<Hello> hellos = testClient().getHellos();
 		assertThat(hellos).as("hellos was null").isNotNull();
 		assertThat(hellos.size()).as("hellos was not the right size").isEqualTo(2);
@@ -102,7 +99,7 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 	}
 
 	@Test
-	public void testSimpleParameterizedTypeDecode() {
+	void testSimpleParameterizedTypeDecode() {
 		List<String> hellos = testClient().getHelloStrings();
 		assertThat(hellos).as("hellos was null").isNotNull();
 		assertThat(hellos.size()).as("hellos was not the right size").isEqualTo(2);
@@ -111,7 +108,7 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 
 	@Test
 	@SuppressWarnings("unchecked")
-	public void testWildcardTypeDecode() {
+	void testWildcardTypeDecode() {
 		ResponseEntity<?> wildcard = testClient().getWildcard();
 		assertThat(wildcard).as("wildcard was null").isNotNull();
 		assertThat(wildcard.getStatusCode()).as("wrong status code").isEqualTo(HttpStatus.OK);
@@ -123,7 +120,7 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 	}
 
 	@Test
-	public void testResponseEntityVoid() {
+	void testResponseEntityVoid() {
 		ResponseEntity<Void> response = testClient().getHelloVoid();
 		assertThat(response).as("response was null").isNotNull();
 		List<String> headerVals = response.getHeaders().get("x-test-header");
@@ -133,13 +130,13 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 		assertThat(header).as("header was wrong").isEqualTo("myval");
 	}
 
-	@Test(expected = RuntimeException.class)
-	public void test404() {
-		testClient().getNotFound();
+	@Test
+	void test404() {
+		Assertions.assertThatExceptionOfType(RuntimeException.class).isThrownBy(() -> testClient().getNotFound());
 	}
 
 	@Test
-	public void testDecodes404() {
+	void testDecodes404() {
 		final ResponseEntity<String> response = testClient(true).getNotFound();
 		assertThat(response).as("response was null").isNotNull();
 		assertThat(response.getBody()).as("response body was not null").isNull();
@@ -147,29 +144,29 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 
 	@Test
 	// Issue: https://github.com/spring-cloud/spring-cloud-openfeign/issues/456
-	public void testResponseEntityHeaders() {
+	void testResponseEntityHeaders() {
 		ResponseEntity<String> response = testClient().getContentType();
 		assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
 	}
 
 	protected interface TestClient {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/helloresponse")
+		@GetMapping("/helloresponse")
 		ResponseEntity<Hello> getHelloResponse();
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hellovoid")
+		@GetMapping("/hellovoid")
 		ResponseEntity<Void> getHelloVoid();
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		Hello getHello();
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hellos")
+		@GetMapping("/hellos")
 		List<Hello> getHellos();
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hellostrings")
+		@GetMapping("/hellostrings")
 		List<String> getHelloStrings();
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hellonotfound")
+		@GetMapping("/hellonotfound")
 		ResponseEntity<String> getNotFound();
 
 		@GetMapping("/helloWildcard")
@@ -184,10 +181,10 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 
 		private String message;
 
-		public Hello() {
+		Hello() {
 		}
 
-		public Hello(String message) {
+		Hello(String message) {
 			this.message = message;
 		}
 
@@ -257,7 +254,7 @@ public class SpringDecoderTests extends FeignClientFactoryBean {
 
 		@Override
 		public ResponseEntity<String> getNotFound() {
-			return ResponseEntity.status(HttpStatus.NOT_FOUND).body((String) null);
+			return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
 		}
 
 		@Override

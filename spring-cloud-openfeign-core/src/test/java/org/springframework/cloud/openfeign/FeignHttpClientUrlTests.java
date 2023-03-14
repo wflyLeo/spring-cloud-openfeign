@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import java.util.Objects;
 import feign.Client;
 import feign.Feign;
 import feign.Target;
-import feign.httpclient.ApacheHttpClient;
+import feign.hc5.ApacheHttp5Client;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -31,14 +31,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.openfeign.test.NoSecurityConfiguration;
+import org.springframework.cloud.test.TestSocketUtils;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.util.ReflectionUtils;
-import org.springframework.util.SocketUtils;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,8 +48,8 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
  * @author Olga Maciaszek-Sharma
  */
 @SpringBootTest(classes = FeignHttpClientUrlTests.TestConfig.class, webEnvironment = DEFINED_PORT,
-		value = { "spring.application.name=feignclienturltest", "feign.circuitbreaker.enabled=false",
-				"feign.okhttp.enabled=false", "spring.cloud.loadbalancer.retry.enabled=false" })
+		value = { "spring.application.name=feignclienturltest", "spring.cloud.openfeign.circuitbreaker.enabled=false",
+				"spring.cloud.openfeign.okhttp.enabled=false", "spring.cloud.loadbalancer.retry.enabled=false" })
 @DirtiesContext
 class FeignHttpClientUrlTests {
 
@@ -67,7 +66,7 @@ class FeignHttpClientUrlTests {
 
 	@BeforeAll
 	static void beforeClass() {
-		port = SocketUtils.findAvailableTcpPort();
+		port = TestSocketUtils.findAvailableTcpPort();
 		System.setProperty("server.port", String.valueOf(port));
 	}
 
@@ -102,7 +101,7 @@ class FeignHttpClientUrlTests {
 	@FeignClient(name = "localappurl", url = "http://localhost:${server.port}/")
 	protected interface UrlClient {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		Hello getHello();
 
 	}
@@ -110,7 +109,7 @@ class FeignHttpClientUrlTests {
 	@FeignClient(name = "beanappurl", url = "#{SERVER_URL}path")
 	protected interface BeanUrlClient {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		Hello getHello();
 
 	}
@@ -118,7 +117,7 @@ class FeignHttpClientUrlTests {
 	@FeignClient(name = "beanappurlnoprotocol", url = "#{SERVER_URL_NO_PROTOCOL}path")
 	protected interface BeanUrlClientNoProtocol {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		Hello getHello();
 
 	}
@@ -130,12 +129,12 @@ class FeignHttpClientUrlTests {
 	@Import(NoSecurityConfiguration.class)
 	protected static class TestConfig {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		public Hello getHello() {
 			return new Hello("hello world 1");
 		}
 
-		@RequestMapping(method = RequestMethod.GET, value = "/path/hello")
+		@GetMapping("/path/hello")
 		public Hello getHelloWithPath() {
 			return getHello();
 		}
@@ -154,13 +153,13 @@ class FeignHttpClientUrlTests {
 		public Targeter feignTargeter() {
 			return new Targeter() {
 				@Override
-				public <T> T target(FeignClientFactoryBean factory, Feign.Builder feign, FeignContext context,
+				public <T> T target(FeignClientFactoryBean factory, Feign.Builder feign, FeignClientFactory context,
 						Target.HardCodedTarget<T> target) {
 					Field field = ReflectionUtils.findField(Feign.Builder.class, "client");
 					ReflectionUtils.makeAccessible(field);
 					Client client = (Client) ReflectionUtils.getField(field, feign);
 					if (target.name().equals("localappurl")) {
-						assertThat(client).isInstanceOf(ApacheHttpClient.class).as("client was wrong type");
+						assertThat(client).isInstanceOf(ApacheHttp5Client.class).as("client was wrong type");
 					}
 					return feign.target(target);
 				}

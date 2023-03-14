@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,7 @@
 package org.springframework.cloud.openfeign.testclients;
 
 import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.GetMapping;
 
 /**
  * @author Ryan Baxter
@@ -26,7 +25,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
 @FeignClient(name = "localapp")
 public interface TestClient {
 
-	@RequestMapping(method = RequestMethod.GET, value = "/hello")
+	@GetMapping("/hello")
 	String getHello();
 
 }

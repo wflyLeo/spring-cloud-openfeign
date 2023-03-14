@@ -13,19 +13,6 @@ eureka:
   client:
     registerWithEureka: false
     fetchRegistry: false
-#error:
-#  path: /myerror
-ribbon:
-  ConnectTimeout: 3001
-  ReadTimeout: 60001
-foo:
-  ribbon:
-    ConnectTimeout: 7
-    ReadTimeout: 17
-badClients:
-  ribbon:
-    MaxAutoRetriesNextServer: 10
-    ReadTimeout: 200
 endpoints:
   health:
     sensitive: false
@@ -36,9 +23,9 @@ feignClient:
 management.endpoints.web.expose: '*'
 
 ---
-spring.config.activate.on-profile: no-metrics
-feign.metrics.enabled: false
+spring.config.activate.on-profile: no-micrometer
+spring.cloud.openfeign.micrometer.enabled: false
 
 ---
-spring.config.activate.on-profile: no-foo-metrics
-feign.client.config.foo.metrics.enabled: false
+spring.config.activate.on-profile: no-foo-micrometer
+spring.cloud.openfeign.client.config.foo.micrometer.enabled: false

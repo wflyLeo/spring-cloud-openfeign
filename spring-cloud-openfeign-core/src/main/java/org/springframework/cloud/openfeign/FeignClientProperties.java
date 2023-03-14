@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,9 @@ import feign.Capability;
 import feign.Contract;
 import feign.ExceptionPropagationPolicy;
 import feign.Logger;
+import feign.QueryMapEncoder;
 import feign.RequestInterceptor;
+import feign.ResponseInterceptor;
 import feign.Retryer;
 import feign.codec.Decoder;
 import feign.codec.Encoder;
@@ -40,8 +42,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @author Ram Anaswara
  * @author Jonatan Ivanov
  * @author Olga Maciaszek-Sharma
+ * @author Hyeonmin Park
+ * @author Jasbir Singh
+ * @author Dominique Villard
  */
-@ConfigurationProperties("feign.client")
+@ConfigurationProperties("spring.cloud.openfeign.client")
 public class FeignClientProperties {
 
 	private boolean defaultToProperties = true;
@@ -123,11 +128,13 @@ public class FeignClientProperties {
 
 		private List<Class<RequestInterceptor>> requestInterceptors;
 
+		private Class<ResponseInterceptor> responseInterceptor;
+
 		private Map<String, Collection<String>> defaultRequestHeaders;
 
 		private Map<String, Collection<String>> defaultQueryParameters;
 
-		private Boolean decode404;
+		private Boolean dismiss404;
 
 		private Class<Decoder> decoder;
 
@@ -139,9 +146,17 @@ public class FeignClientProperties {
 
 		private List<Class<Capability>> capabilities;
 
-		private MetricsProperties metrics;
+		private Class<QueryMapEncoder> queryMapEncoder;
+
+		private MicrometerProperties micrometer;
 
 		private Boolean followRedirects;
+
+		/**
+		 * Allows setting Feign client host URL. This value will only be taken into
+		 * account if the url is not set in the @FeignClient annotation.
+		 */
+		private String url;
 
 		public Logger.Level getLoggerLevel() {
 			return loggerLevel;
@@ -191,6 +206,14 @@ public class FeignClientProperties {
 			this.requestInterceptors = requestInterceptors;
 		}
 
+		public Class<ResponseInterceptor> getResponseInterceptor() {
+			return responseInterceptor;
+		}
+
+		public void setResponseInterceptor(Class<ResponseInterceptor> responseInterceptor) {
+			this.responseInterceptor = responseInterceptor;
+		}
+
 		public Map<String, Collection<String>> getDefaultRequestHeaders() {
 			return defaultRequestHeaders;
 		}
@@ -207,12 +230,12 @@ public class FeignClientProperties {
 			this.defaultQueryParameters = defaultQueryParameters;
 		}
 
-		public Boolean getDecode404() {
-			return decode404;
+		public Boolean getDismiss404() {
+			return dismiss404;
 		}
 
-		public void setDecode404(Boolean decode404) {
-			this.decode404 = decode404;
+		public void setDismiss404(Boolean dismiss404) {
+			this.dismiss404 = dismiss404;
 		}
 
 		public Class<Decoder> getDecoder() {
@@ -255,12 +278,20 @@ public class FeignClientProperties {
 			this.capabilities = capabilities;
 		}
 
-		public MetricsProperties getMetrics() {
-			return metrics;
+		public Class<QueryMapEncoder> getQueryMapEncoder() {
+			return queryMapEncoder;
 		}
 
-		public void setMetrics(MetricsProperties metrics) {
-			this.metrics = metrics;
+		public void setQueryMapEncoder(Class<QueryMapEncoder> queryMapEncoder) {
+			this.queryMapEncoder = queryMapEncoder;
+		}
+
+		public MicrometerProperties getMicrometer() {
+			return micrometer;
+		}
+
+		public void setMicrometer(MicrometerProperties micrometer) {
+			this.micrometer = micrometer;
 		}
 
 		public Boolean isFollowRedirects() {
@@ -269,6 +300,14 @@ public class FeignClientProperties {
 
 		public void setFollowRedirects(Boolean followRedirects) {
 			this.followRedirects = followRedirects;
+		}
+
+		public String getUrl() {
+			return url;
+		}
+
+		public void setUrl(String url) {
+			this.url = url;
 		}
 
 		@Override
@@ -284,28 +323,32 @@ public class FeignClientProperties {
 					&& Objects.equals(readTimeout, that.readTimeout) && Objects.equals(retryer, that.retryer)
 					&& Objects.equals(errorDecoder, that.errorDecoder)
 					&& Objects.equals(requestInterceptors, that.requestInterceptors)
-					&& Objects.equals(decode404, that.decode404) && Objects.equals(encoder, that.encoder)
+					&& Objects.equals(responseInterceptor, that.responseInterceptor)
+					&& Objects.equals(dismiss404, that.dismiss404) && Objects.equals(encoder, that.encoder)
 					&& Objects.equals(decoder, that.decoder) && Objects.equals(contract, that.contract)
 					&& Objects.equals(exceptionPropagationPolicy, that.exceptionPropagationPolicy)
 					&& Objects.equals(defaultRequestHeaders, that.defaultRequestHeaders)
 					&& Objects.equals(defaultQueryParameters, that.defaultQueryParameters)
-					&& Objects.equals(capabilities, that.capabilities) && Objects.equals(metrics, that.metrics)
-					&& Objects.equals(followRedirects, that.followRedirects);
+					&& Objects.equals(capabilities, that.capabilities)
+					&& Objects.equals(queryMapEncoder, that.queryMapEncoder)
+					&& Objects.equals(micrometer, that.micrometer)
+					&& Objects.equals(followRedirects, that.followRedirects) && Objects.equals(url, that.url);
 		}
 
 		@Override
 		public int hashCode() {
 			return Objects.hash(loggerLevel, connectTimeout, readTimeout, retryer, errorDecoder, requestInterceptors,
-					decode404, encoder, decoder, contract, exceptionPropagationPolicy, defaultQueryParameters,
-					defaultRequestHeaders, capabilities, metrics, followRedirects);
+					responseInterceptor, dismiss404, encoder, decoder, contract, exceptionPropagationPolicy,
+					defaultQueryParameters, defaultRequestHeaders, capabilities, queryMapEncoder, micrometer,
+					followRedirects, url);
 		}
 
 	}
 
 	/**
-	 * Metrics configuration for Feign Client.
+	 * Micrometer configuration for Feign Client.
 	 */
-	public static class MetricsProperties {
+	public static class MicrometerProperties {
 
 		private Boolean enabled = true;
 
@@ -326,7 +369,7 @@ public class FeignClientProperties {
 				return false;
 			}
 
-			MetricsProperties that = (MetricsProperties) o;
+			MicrometerProperties that = (MicrometerProperties) o;
 			return Objects.equals(enabled, that.enabled);
 		}
 

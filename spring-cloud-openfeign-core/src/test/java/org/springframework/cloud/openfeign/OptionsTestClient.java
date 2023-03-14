@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package org.springframework.cloud.openfeign;
 
-import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -36,7 +35,7 @@ import feign.Response;
  */
 public class OptionsTestClient implements Client {
 
-	private static ObjectMapper mapper;
+	private final static ObjectMapper mapper;
 
 	static {
 		mapper = new ObjectMapper();
@@ -44,7 +43,7 @@ public class OptionsTestClient implements Client {
 	}
 
 	@Override
-	public Response execute(Request request, Request.Options options) throws IOException {
+	public Response execute(Request request, Request.Options options) {
 		return Response.builder().status(200).request(request).headers(headers()).body(prepareResponse(options))
 				.build();
 	}
@@ -67,39 +66,8 @@ public class OptionsTestClient implements Client {
 		}
 	}
 
-	static class OptionsResponseForTests {
-
-		private long connectTimeout;
-
-		private TimeUnit connectTimeoutUnit;
-
-		private long readTimeout;
-
-		private TimeUnit readTimeoutUnit;
-
-		OptionsResponseForTests(long connectTimeout, TimeUnit connectTimeoutUnit, long readTimeout,
-				TimeUnit readTimeoutUnit) {
-			this.connectTimeout = connectTimeout;
-			this.connectTimeoutUnit = connectTimeoutUnit;
-			this.readTimeout = readTimeout;
-			this.readTimeoutUnit = readTimeoutUnit;
-		}
-
-		public long getConnectTimeout() {
-			return connectTimeout;
-		}
-
-		public TimeUnit getConnectTimeoutUnit() {
-			return connectTimeoutUnit;
-		}
-
-		public long getReadTimeout() {
-			return readTimeout;
-		}
-
-		public TimeUnit getReadTimeoutUnit() {
-			return readTimeoutUnit;
-		}
+	record OptionsResponseForTests(long connectTimeout, TimeUnit connectTimeoutUnit, long readTimeout,
+			TimeUnit readTimeoutUnit) {
 
 		@Override
 		public String toString() {

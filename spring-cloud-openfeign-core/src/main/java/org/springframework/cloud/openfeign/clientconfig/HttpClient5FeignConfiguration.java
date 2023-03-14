@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,14 @@ package org.springframework.cloud.openfeign.clientconfig;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.concurrent.TimeUnit;
 
-import javax.annotation.PreDestroy;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
+import jakarta.annotation.PreDestroy;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hc.client5.http.config.RequestConfig;
@@ -36,6 +35,7 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
 import org.apache.hc.client5.http.socket.LayeredConnectionSocketFactory;
+import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
 import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder;
 import org.apache.hc.core5.http.io.SocketConfig;
 import org.apache.hc.core5.http.ssl.TLS;
@@ -55,6 +55,7 @@ import org.springframework.context.annotation.Configuration;
  * Default configuration for {@link CloseableHttpClient}.
  *
  * @author Nguyen Ky Thanh
+ * @author changjin wei(魏昌进)
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnMissingBean(CloseableHttpClient.class)
@@ -90,7 +91,11 @@ public class HttpClient5FeignConfiguration {
 				.setDefaultRequestConfig(RequestConfig.custom()
 						.setConnectTimeout(
 								Timeout.of(httpClientProperties.getConnectionTimeout(), TimeUnit.MILLISECONDS))
-						.setRedirectsEnabled(httpClientProperties.isFollowRedirects()).build())
+						.setRedirectsEnabled(httpClientProperties.isFollowRedirects())
+						.setConnectionRequestTimeout(
+								Timeout.of(httpClientProperties.getHc5().getConnectionRequestTimeout(),
+										httpClientProperties.getHc5().getConnectionRequestTimeoutUnit()))
+						.build())
 				.build();
 		return httpClient5;
 	}
@@ -111,11 +116,9 @@ public class HttpClient5FeignConfiguration {
 				final SSLContext sslContext = SSLContext.getInstance("SSL");
 				sslContext.init(null, new TrustManager[] { new DisabledValidationTrustManager() }, new SecureRandom());
 				sslConnectionSocketFactoryBuilder.setSslContext(sslContext);
+				sslConnectionSocketFactoryBuilder.setHostnameVerifier(NoopHostnameVerifier.INSTANCE);
 			}
-			catch (NoSuchAlgorithmException e) {
-				LOG.warn("Error creating SSLContext", e);
-			}
-			catch (KeyManagementException e) {
+			catch (NoSuchAlgorithmException | KeyManagementException e) {
 				LOG.warn("Error creating SSLContext", e);
 			}
 		}
@@ -131,10 +134,10 @@ public class HttpClient5FeignConfiguration {
 		DisabledValidationTrustManager() {
 		}
 
-		public void checkClientTrusted(X509Certificate[] x509Certificates, String s) throws CertificateException {
+		public void checkClientTrusted(X509Certificate[] x509Certificates, String s) {
 		}
 
-		public void checkServerTrusted(X509Certificate[] x509Certificates, String s) throws CertificateException {
+		public void checkServerTrusted(X509Certificate[] x509Certificates, String s) {
 		}
 
 		public X509Certificate[] getAcceptedIssuers() {

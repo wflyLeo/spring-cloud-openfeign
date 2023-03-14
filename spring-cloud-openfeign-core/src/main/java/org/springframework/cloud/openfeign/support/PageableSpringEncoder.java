@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import org.springframework.data.domain.Sort;
  * Provides support for encoding spring Pageable via composition.
  *
  * @author Pascal Büttiker
+ * @author Yanming Zhou
  */
 public class PageableSpringEncoder implements Encoder {
 
@@ -78,20 +79,18 @@ public class PageableSpringEncoder implements Encoder {
 	public void encode(Object object, Type bodyType, RequestTemplate template) throws EncodeException {
 
 		if (supports(object)) {
-			if (object instanceof Pageable) {
-				Pageable pageable = (Pageable) object;
+			if (object instanceof Pageable pageable) {
 
 				if (pageable.isPaged()) {
-					template.query(pageParameter, pageable.getPageNumber() + "");
-					template.query(sizeParameter, pageable.getPageSize() + "");
+					template.query(pageParameter, String.valueOf(pageable.getPageNumber()));
+					template.query(sizeParameter, String.valueOf(pageable.getPageSize()));
 				}
 
 				if (pageable.getSort() != null) {
 					applySort(template, pageable.getSort());
 				}
 			}
-			else if (object instanceof Sort) {
-				Sort sort = (Sort) object;
+			else if (object instanceof Sort sort) {
 				applySort(template, sort);
 			}
 		}

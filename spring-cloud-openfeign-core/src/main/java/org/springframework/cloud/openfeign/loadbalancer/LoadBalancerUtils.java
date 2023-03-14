@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import org.springframework.cloud.client.loadbalancer.RequestData;
 import org.springframework.cloud.client.loadbalancer.ResponseData;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 
 /**
  * @author Olga Maciaszek-Sharma
@@ -73,14 +73,14 @@ final class LoadBalancerUtils {
 	static ResponseData buildResponseData(Response response) {
 		HttpHeaders responseHeaders = new HttpHeaders();
 		response.headers().forEach((key, value) -> responseHeaders.put(key, new ArrayList<>(value)));
-		return new ResponseData(HttpStatus.resolve(response.status()), responseHeaders, null,
+		return new ResponseData(HttpStatusCode.valueOf(response.status()), responseHeaders, null,
 				buildRequestData(response.request()));
 	}
 
 	static RequestData buildRequestData(Request request) {
 		HttpHeaders requestHeaders = new HttpHeaders();
 		request.headers().forEach((key, value) -> requestHeaders.put(key, new ArrayList<>(value)));
-		return new RequestData(HttpMethod.resolve(request.httpMethod().name()), URI.create(request.url()),
+		return new RequestData(HttpMethod.valueOf(request.httpMethod().name()), URI.create(request.url()),
 				requestHeaders, null, new HashMap<>());
 	}
 

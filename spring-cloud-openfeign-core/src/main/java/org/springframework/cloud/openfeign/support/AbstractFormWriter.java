@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.springframework.cloud.openfeign.support;
 
 import java.io.IOException;
+import java.lang.reflect.Array;
 import java.util.Iterator;
 import java.util.function.Predicate;
 
@@ -32,6 +33,7 @@ import static feign.form.ContentProcessor.CRLF;
 
 /**
  * @author Darren Foong
+ * @author Wu Daifu
  */
 public abstract class AbstractFormWriter extends AbstractWriter {
 
@@ -61,13 +63,18 @@ public abstract class AbstractFormWriter extends AbstractWriter {
 	protected abstract String writeAsString(Object object) throws IOException;
 
 	private boolean isTypeOrCollection(Object object, Predicate<Object> isType) {
-		if (object.getClass().isArray()) {
-			Object[] array = (Object[]) object;
-
-			return array.length > 1 && isType.test(array[0]);
+		if (object == null) {
+			return false;
 		}
-		else if (object instanceof Iterable) {
-			Iterable<?> iterable = (Iterable<?>) object;
+		if (object.getClass().isArray()) {
+			int len = Array.getLength(object);
+			if (len > 0) {
+				Object one = Array.get(object, 0);
+				return len > 1 && one != null && isType.test(one);
+			}
+			return false;
+		}
+		else if (object instanceof Iterable<?> iterable) {
 			Iterator<?> iterator = iterable.iterator();
 
 			return iterator.hasNext() && isType.test(iterator.next());

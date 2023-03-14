@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,11 +25,8 @@ import java.util.Collections;
 import java.util.List;
 
 import feign.Feign;
-import org.hamcrest.Matchers;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import org.springframework.cloud.openfeign.testclients.TestClient;
@@ -37,15 +34,14 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.util.ReflectionUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /**
  * @author Sven Döring
  * @author Sam Kruglov
+ * @author Szymon Linowski
  */
-public class FeignClientBuilderTests {
-
-	@Rule
-	public ExpectedException thrown = ExpectedException.none();
+class FeignClientBuilderTests {
 
 	private FeignClientBuilder feignClientBuilder;
 
@@ -75,15 +71,15 @@ public class FeignClientBuilderTests {
 		return (T) ReflectionUtils.getField(field, factoryBean);
 	}
 
-	@Before
-	public void setUp() {
+	@BeforeEach
+	void setUp() {
 		this.applicationContext = Mockito.mock(ApplicationContext.class);
 		this.feignClientBuilder = new FeignClientBuilder(this.applicationContext);
 	}
 
 	@Test
-	public void safetyCheckForNewFieldsOnTheFeignClientAnnotation() {
-		final List<String> methodNames = new ArrayList();
+	void safetyCheckForNewFieldsOnTheFeignClientAnnotation() {
+		final List<String> methodNames = new ArrayList<>();
 		for (final Method method : FeignClient.class.getMethods()) {
 			methodNames.add(method.getName());
 		}
@@ -96,12 +92,12 @@ public class FeignClientBuilderTests {
 		// on this builder class.
 		// (2) Or a new field was added and the builder class has to be extended with this
 		// new field.
-		assertThat(methodNames).containsExactly("contextId", "decode404", "fallback", "fallbackFactory", "name", "path",
-				"url");
+		assertThat(methodNames).containsExactly("contextId", "dismiss404", "fallback", "fallbackFactory", "name",
+				"path", "url");
 	}
 
 	@Test
-	public void forType_preinitializedBuilder() {
+	void forType_preinitializedBuilder() {
 		// when:
 		final FeignClientBuilder.Builder builder = this.feignClientBuilder.forType(TestFeignClient.class, "TestClient");
 
@@ -114,16 +110,16 @@ public class FeignClientBuilderTests {
 		// and:
 		assertFactoryBeanField(builder, "url", getDefaultValueFromFeignClientAnnotation("url"));
 		assertFactoryBeanField(builder, "path", getDefaultValueFromFeignClientAnnotation("path"));
-		assertFactoryBeanField(builder, "decode404", getDefaultValueFromFeignClientAnnotation("decode404"));
+		assertFactoryBeanField(builder, "dismiss404", getDefaultValueFromFeignClientAnnotation("dismiss404"));
 		assertFactoryBeanField(builder, "fallback", getDefaultValueFromFeignClientAnnotation("fallback"));
 		assertFactoryBeanField(builder, "fallbackFactory", getDefaultValueFromFeignClientAnnotation("fallbackFactory"));
 	}
 
 	@Test
-	public void forType_allFieldsSetOnBuilder() {
+	void forType_allFieldsSetOnBuilder() {
 		// when:
 		final FeignClientBuilder.Builder builder = this.feignClientBuilder.forType(TestFeignClient.class, "TestClient")
-				.decode404(true).url("Url/").path("/Path").contextId("TestContext");
+				.dismiss404(true).url("Url/").path("/Path").contextId("TestContext");
 
 		// then:
 		assertFactoryBeanField(builder, "applicationContext", this.applicationContext);
@@ -134,15 +130,15 @@ public class FeignClientBuilderTests {
 		// and:
 		assertFactoryBeanField(builder, "url", "http://Url/");
 		assertFactoryBeanField(builder, "path", "/Path");
-		assertFactoryBeanField(builder, "decode404", true);
+		assertFactoryBeanField(builder, "dismiss404", true);
 
 	}
 
 	@Test
-	public void forType_clientFactoryBeanProvided() {
+	void forType_clientFactoryBeanProvided() {
 		// when:
 		final FeignClientBuilder.Builder builder = this.feignClientBuilder
-				.forType(TestFeignClient.class, new FeignClientFactoryBean(), "TestClient").decode404(true)
+				.forType(TestFeignClient.class, new FeignClientFactoryBean(), "TestClient").dismiss404(true)
 				.path("Path/").url("Url/").contextId("TestContext").customize(Feign.Builder::doNotCloseAfterDecode);
 
 		// then:
@@ -154,27 +150,26 @@ public class FeignClientBuilderTests {
 		// and:
 		assertFactoryBeanField(builder, "url", "http://Url/");
 		assertFactoryBeanField(builder, "path", "/Path");
-		assertFactoryBeanField(builder, "decode404", true);
+		assertFactoryBeanField(builder, "dismiss404", true);
 		List<FeignBuilderCustomizer> additionalCustomizers = getFactoryBeanField(builder, "additionalCustomizers");
 		assertThat(additionalCustomizers).hasSize(1);
 	}
 
 	@Test
-	public void forType_build() {
+	void forType_build() {
 		// given:
-		Mockito.when(this.applicationContext.getBean(FeignContext.class)).thenThrow(new ClosedFileSystemException()); // throw
-																														// an
-																														// unusual
-																														// exception
-																														// in
-																														// the
-																														// FeignClientFactoryBean
+		Mockito.when(this.applicationContext.getBean(FeignClientFactory.class))
+				.thenThrow(new ClosedFileSystemException()); // throw
+		// an
+		// unusual
+		// exception
+		// in
+		// the
+		// FeignClientFactoryBean
 		final FeignClientBuilder.Builder builder = this.feignClientBuilder.forType(TestClient.class, "TestClient");
-
 		// expect: 'the build will fail right after calling build() with the mocked
 		// unusual exception'
-		this.thrown.expect(Matchers.isA(ClosedFileSystemException.class));
-		builder.build();
+		assertThatExceptionOfType(ClosedFileSystemException.class).isThrownBy(builder::build);
 	}
 
 	private interface TestFeignClient {

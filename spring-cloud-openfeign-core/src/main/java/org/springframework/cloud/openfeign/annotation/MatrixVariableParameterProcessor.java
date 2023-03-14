@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,11 +69,12 @@ public class MatrixVariableParameterProcessor implements AnnotatedParameterProce
 		return true;
 	}
 
+	@SuppressWarnings("unchecked")
 	private String expandMap(Object object) {
 		Map<String, Object> paramMap = (Map) object;
 
-		return paramMap.keySet().stream().map(key -> ";" + key + "=" + paramMap.get(key).toString())
-				.collect(Collectors.joining());
+		return paramMap.keySet().stream().filter(key -> paramMap.get(key) != null)
+				.map(key -> ";" + key + "=" + paramMap.get(key).toString()).collect(Collectors.joining());
 	}
 
 }

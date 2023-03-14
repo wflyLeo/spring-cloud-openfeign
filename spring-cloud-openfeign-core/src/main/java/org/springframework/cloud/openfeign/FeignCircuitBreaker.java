@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
  *
  * @author Marcin Grzejszczak
  * @author Andrii Bohutskyi
+ * @author Kwangyong Kim
  * @since 3.0.0
  */
 public final class FeignCircuitBreaker {
@@ -53,6 +54,8 @@ public final class FeignCircuitBreaker {
 
 		private boolean circuitBreakerGroupEnabled;
 
+		private CircuitBreakerNameResolver circuitBreakerNameResolver;
+
 		Builder circuitBreakerFactory(CircuitBreakerFactory circuitBreakerFactory) {
 			this.circuitBreakerFactory = circuitBreakerFactory;
 			return this;
@@ -68,8 +71,13 @@ public final class FeignCircuitBreaker {
 			return this;
 		}
 
+		Builder circuitBreakerNameResolver(CircuitBreakerNameResolver circuitBreakerNameResolver) {
+			this.circuitBreakerNameResolver = circuitBreakerNameResolver;
+			return this;
+		}
+
 		public <T> T target(Target<T> target, T fallback) {
-			return build(fallback != null ? new FallbackFactory.Default<T>(fallback) : null).newInstance(target);
+			return build(fallback != null ? new FallbackFactory.Default<>(fallback) : null).newInstance(target);
 		}
 
 		public <T> T target(Target<T> target, FallbackFactory<? extends T> fallbackFactory) {
@@ -82,9 +90,9 @@ public final class FeignCircuitBreaker {
 		}
 
 		public Feign build(final FallbackFactory<?> nullableFallbackFactory) {
-			super.invocationHandlerFactory(
-					(target, dispatch) -> new FeignCircuitBreakerInvocationHandler(circuitBreakerFactory,
-							feignClientName, target, dispatch, nullableFallbackFactory, circuitBreakerGroupEnabled));
+			super.invocationHandlerFactory((target, dispatch) -> new FeignCircuitBreakerInvocationHandler(
+					circuitBreakerFactory, feignClientName, target, dispatch, nullableFallbackFactory,
+					circuitBreakerGroupEnabled, circuitBreakerNameResolver));
 			return super.build();
 		}
 

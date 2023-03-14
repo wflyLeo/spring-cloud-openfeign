@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2020 the original author or authors.
+ * Copyright 2016-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +21,11 @@ import feign.slf4j.Slf4jLogger;
 
 /**
  * @author Venil Noronha
+ * @author Olga Maciaszek-Sharma
  */
 public class DefaultFeignLoggerFactory implements FeignLoggerFactory {
 
-	private Logger logger;
+	private final Logger logger;
 
 	public DefaultFeignLoggerFactory(Logger logger) {
 		this.logger = logger;

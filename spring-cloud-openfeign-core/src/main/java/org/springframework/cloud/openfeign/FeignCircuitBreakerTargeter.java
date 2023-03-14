@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,13 @@ package org.springframework.cloud.openfeign;
 import feign.Feign;
 import feign.Target;
 
+import org.springframework.beans.factory.FactoryBean;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.util.StringUtils;
 
+/**
+ * @author 黄学敏（huangxuemin)
+ */
 @SuppressWarnings("unchecked")
 class FeignCircuitBreakerTargeter implements Targeter {
 
@@ -29,18 +33,21 @@ class FeignCircuitBreakerTargeter implements Targeter {
 
 	private final boolean circuitBreakerGroupEnabled;
 
-	FeignCircuitBreakerTargeter(CircuitBreakerFactory circuitBreakerFactory, boolean circuitBreakerGroupEnabled) {
+	private final CircuitBreakerNameResolver circuitBreakerNameResolver;
+
+	FeignCircuitBreakerTargeter(CircuitBreakerFactory circuitBreakerFactory, boolean circuitBreakerGroupEnabled,
+			CircuitBreakerNameResolver circuitBreakerNameResolver) {
 		this.circuitBreakerFactory = circuitBreakerFactory;
 		this.circuitBreakerGroupEnabled = circuitBreakerGroupEnabled;
+		this.circuitBreakerNameResolver = circuitBreakerNameResolver;
 	}
 
 	@Override
-	public <T> T target(FeignClientFactoryBean factory, Feign.Builder feign, FeignContext context,
+	public <T> T target(FeignClientFactoryBean factory, Feign.Builder feign, FeignClientFactory context,
 			Target.HardCodedTarget<T> target) {
-		if (!(feign instanceof FeignCircuitBreaker.Builder)) {
+		if (!(feign instanceof FeignCircuitBreaker.Builder builder)) {
 			return feign.target(target);
 		}
-		FeignCircuitBreaker.Builder builder = (FeignCircuitBreaker.Builder) feign;
 		String name = !StringUtils.hasText(factory.getContextId()) ? factory.getName() : factory.getContextId();
 		Class<?> fallback = factory.getFallback();
 		if (fallback != void.class) {
@@ -53,20 +60,20 @@ class FeignCircuitBreakerTargeter implements Targeter {
 		return builder(name, builder).target(target);
 	}
 
-	private <T> T targetWithFallbackFactory(String feignClientName, FeignContext context,
+	private <T> T targetWithFallbackFactory(String feignClientName, FeignClientFactory context,
 			Target.HardCodedTarget<T> target, FeignCircuitBreaker.Builder builder, Class<?> fallbackFactoryClass) {
 		FallbackFactory<? extends T> fallbackFactory = (FallbackFactory<? extends T>) getFromContext("fallbackFactory",
 				feignClientName, context, fallbackFactoryClass, FallbackFactory.class);
 		return builder(feignClientName, builder).target(target, fallbackFactory);
 	}
 
-	private <T> T targetWithFallback(String feignClientName, FeignContext context, Target.HardCodedTarget<T> target,
-			FeignCircuitBreaker.Builder builder, Class<?> fallback) {
+	private <T> T targetWithFallback(String feignClientName, FeignClientFactory context,
+			Target.HardCodedTarget<T> target, FeignCircuitBreaker.Builder builder, Class<?> fallback) {
 		T fallbackInstance = getFromContext("fallback", feignClientName, context, fallback, target.type());
 		return builder(feignClientName, builder).target(target, fallbackInstance);
 	}
 
-	private <T> T getFromContext(String fallbackMechanism, String feignClientName, FeignContext context,
+	private <T> T getFromContext(String fallbackMechanism, String feignClientName, FeignClientFactory context,
 			Class<?> beanType, Class<T> targetType) {
 		Object fallbackInstance = context.getInstance(feignClientName, beanType);
 		if (fallbackInstance == null) {
@@ -75,17 +82,35 @@ class FeignCircuitBreakerTargeter implements Targeter {
 							beanType, feignClientName));
 		}
 
-		if (!targetType.isAssignableFrom(beanType)) {
-			throw new IllegalStateException(String.format("Incompatible " + fallbackMechanism
-					+ " instance. Fallback/fallbackFactory of type %s is not assignable to %s for feign client %s",
-					beanType, targetType, feignClientName));
+		if (fallbackInstance instanceof FactoryBean<?> factoryBean) {
+			try {
+				fallbackInstance = factoryBean.getObject();
+			}
+			catch (Exception e) {
+				throw new IllegalStateException(fallbackMechanism + " create fail", e);
+			}
+
+			if (!targetType.isAssignableFrom(fallbackInstance.getClass())) {
+				throw new IllegalStateException(String.format("Incompatible " + fallbackMechanism
+						+ " instance. Fallback/fallbackFactory of type %s is not assignable to %s for feign client %s",
+						fallbackInstance.getClass(), targetType, feignClientName));
+			}
+
+		}
+		else {
+			if (!targetType.isAssignableFrom(beanType)) {
+				throw new IllegalStateException(String.format("Incompatible " + fallbackMechanism
+						+ " instance. Fallback/fallbackFactory of type %s is not assignable to %s for feign client %s",
+						beanType, targetType, feignClientName));
+			}
 		}
 		return (T) fallbackInstance;
 	}
 
 	private FeignCircuitBreaker.Builder builder(String feignClientName, FeignCircuitBreaker.Builder builder) {
 		return builder.circuitBreakerFactory(circuitBreakerFactory).feignClientName(feignClientName)
-				.circuitBreakerGroupEnabled(circuitBreakerGroupEnabled);
+				.circuitBreakerGroupEnabled(circuitBreakerGroupEnabled)
+				.circuitBreakerNameResolver(circuitBreakerNameResolver);
 	}
 
 }

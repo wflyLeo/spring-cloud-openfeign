@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,16 @@
 
 package org.springframework.cloud.openfeign.loadbalancer;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import feign.Client;
 import feign.Request;
 import feign.Response;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -62,23 +67,32 @@ import static org.mockito.Mockito.when;
  * Commons project, so here we are only testing the interactions between
  * {@link FeignBlockingLoadBalancerClient} and its delegates.
  *
- * @see <a href=
- * "https://github.com/spring-cloud/spring-cloud-commons/blob/master/spring-cloud-loadbalancer/src/test/java/org/springframework/cloud/loadbalancer/blocking/client/BlockingLoadBalancerClientTests.java">BlockingLoadBalancerClientTests</a>
  * @author Olga Maciaszek-Sharma
+ * @author changjin wei(魏昌进)
+ * @see <a href=
+ * "https://github.com/spring-cloud/spring-cloud-commons/blob/main/spring-cloud-loadbalancer/src/test/java/org/springframework/cloud/loadbalancer/blocking/client/BlockingLoadBalancerClientTests.java">BlockingLoadBalancerClientTests</a>
  */
 @ExtendWith(MockitoExtension.class)
 class FeignBlockingLoadBalancerClientTests {
 
-	private Client delegate = mock(Client.class);
+	private final Client delegate = mock(Client.class);
 
-	private BlockingLoadBalancerClient loadBalancerClient = mock(BlockingLoadBalancerClient.class);
+	private final BlockingLoadBalancerClient loadBalancerClient = mock(BlockingLoadBalancerClient.class);
 
 	private final LoadBalancerClientFactory loadBalancerClientFactory = mock(LoadBalancerClientFactory.class);
 
 	private final LoadBalancerProperties loadBalancerProperties = new LoadBalancerProperties();
 
-	private FeignBlockingLoadBalancerClient feignBlockingLoadBalancerClient = new FeignBlockingLoadBalancerClient(
-			delegate, loadBalancerClient, loadBalancerProperties, loadBalancerClientFactory);
+	private final List<LoadBalancerFeignRequestTransformer> transformers = Arrays.asList(new InstanceIdTransformer(),
+			new ServiceIdTransformer());
+
+	private final FeignBlockingLoadBalancerClient feignBlockingLoadBalancerClient = new FeignBlockingLoadBalancerClient(
+			delegate, loadBalancerClient, loadBalancerClientFactory, transformers);
+
+	@BeforeEach
+	void setUp() {
+		when(loadBalancerClientFactory.getProperties(any(String.class))).thenReturn(loadBalancerProperties);
+	}
 
 	@Test
 	void shouldExtractServiceIdFromRequestUrl() throws IOException {
@@ -105,8 +119,7 @@ class FeignBlockingLoadBalancerClientTests {
 		Response response = feignBlockingLoadBalancerClient.execute(request, new Request.Options());
 
 		assertThat(response.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE.value());
-		assertThat(response.body().toString())
-				.isEqualTo("Load balancer does not contain an instance for the service test");
+		assertThat(read(response)).isEqualTo("Load balancer does not contain an instance for the service test");
 	}
 
 	@Test
@@ -126,9 +139,11 @@ class FeignBlockingLoadBalancerClientTests {
 		Request actualRequest = captor.getValue();
 		assertThat(actualRequest.httpMethod()).isEqualTo(Request.HttpMethod.GET);
 		assertThat(actualRequest.url()).isEqualTo(url);
-		assertThat(actualRequest.headers()).hasSize(1);
+		assertThat(actualRequest.headers()).hasSize(3);
 		assertThat(actualRequest.headers()).containsEntry(HttpHeaders.CONTENT_TYPE,
 				Collections.singletonList(MediaType.APPLICATION_JSON_VALUE));
+		assertThat(actualRequest.headers()).containsEntry("X-ServiceId", Collections.singletonList("test"));
+		assertThat(actualRequest.headers()).containsEntry("X-InstanceId", Collections.singletonList("test-1"));
 		assertThat(new String(actualRequest.body())).isEqualTo("hello");
 	}
 
@@ -165,6 +180,17 @@ class FeignBlockingLoadBalancerClientTests {
 		assertThat(anotherLifecycleLogRequests)
 				.extracting(completionContext -> completionContext.getClientResponse().getHttpStatus())
 				.contains(HttpStatus.OK);
+	}
+
+	private String read(Response response) throws IOException {
+		BufferedReader reader = new BufferedReader(
+				new InputStreamReader(response.body().asInputStream(), StandardCharsets.UTF_8));
+		StringBuilder outputString = new StringBuilder();
+		String line;
+		while ((line = reader.readLine()) != null) {
+			outputString.append(line);
+		}
+		return outputString.toString();
 	}
 
 	private Request testRequest() {
@@ -231,6 +257,30 @@ class FeignBlockingLoadBalancerClientTests {
 		@Override
 		protected String getName() {
 			return this.getClass().getSimpleName();
+		}
+
+	}
+
+	private static class InstanceIdTransformer implements LoadBalancerFeignRequestTransformer {
+
+		@Override
+		public Request transformRequest(Request request, ServiceInstance instance) {
+			Map<String, Collection<String>> headers = new HashMap<>(request.headers());
+			headers.put("X-InstanceId", Collections.singletonList(instance.getInstanceId()));
+			return Request.create(request.httpMethod(), request.url(), headers, request.body(), request.charset(),
+					request.requestTemplate());
+		}
+
+	}
+
+	private static class ServiceIdTransformer implements LoadBalancerFeignRequestTransformer {
+
+		@Override
+		public Request transformRequest(Request request, ServiceInstance instance) {
+			Map<String, Collection<String>> headers = new HashMap<>(request.headers());
+			headers.put("X-ServiceId", Collections.singletonList(instance.getServiceId()));
+			return Request.create(request.httpMethod(), request.url(), headers, request.body(), request.charset(),
+					request.requestTemplate());
 		}
 
 	}

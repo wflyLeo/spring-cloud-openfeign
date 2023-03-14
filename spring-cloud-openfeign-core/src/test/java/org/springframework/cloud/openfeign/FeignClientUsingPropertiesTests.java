@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,20 +32,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import javax.servlet.http.HttpServletRequest;
-
 import feign.Capability;
 import feign.Feign;
+import feign.InvocationContext;
 import feign.InvocationHandlerFactory;
+import feign.QueryMapEncoder;
 import feign.Request;
 import feign.RequestInterceptor;
 import feign.RequestTemplate;
+import feign.ResponseInterceptor;
 import feign.RetryableException;
 import feign.Retryer;
 import feign.codec.EncodeException;
 import feign.codec.Encoder;
 import feign.codec.ErrorDecoder;
-import feign.micrometer.MicrometerCapability;
+import feign.micrometer.MicrometerObservationCapability;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledForJreRange;
 import org.junit.jupiter.api.condition.JRE;
@@ -66,8 +68,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -80,6 +80,8 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
  * @author Olga Maciaszek-Sharma
  * @author Ilia Ilinykh
  * @author Jonatan Ivanov
+ * @author Hyeonmin Park
+ * @author Dominique Villard
  */
 @SuppressWarnings("FieldMayBeFinal")
 @SpringBootTest(classes = FeignClientUsingPropertiesTests.Application.class, webEnvironment = RANDOM_PORT)
@@ -88,7 +90,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 public class FeignClientUsingPropertiesTests {
 
 	@Autowired
-	FeignContext context;
+	FeignClientFactory context;
 
 	@Autowired
 	private ApplicationContext applicationContext;
@@ -99,6 +101,8 @@ public class FeignClientUsingPropertiesTests {
 	private FeignClientFactoryBean fooFactoryBean;
 
 	private FeignClientFactoryBean barFactoryBean;
+
+	private FeignClientFactoryBean bazFactoryBean;
 
 	private FeignClientFactoryBean unwrapFactoryBean;
 
@@ -116,6 +120,10 @@ public class FeignClientUsingPropertiesTests {
 		barFactoryBean = new FeignClientFactoryBean();
 		barFactoryBean.setContextId("bar");
 		barFactoryBean.setType(FeignClientFactoryBean.class);
+
+		bazFactoryBean = new FeignClientFactoryBean();
+		bazFactoryBean.setContextId("baz");
+		bazFactoryBean.setType(FeignClientFactoryBean.class);
 
 		unwrapFactoryBean = new FeignClientFactoryBean();
 		unwrapFactoryBean.setContextId("unwrap");
@@ -144,6 +152,11 @@ public class FeignClientUsingPropertiesTests {
 		return barFactoryBean.feign(context).target(BarClient.class, "http://localhost:" + port);
 	}
 
+	public PingClient pingClient() {
+		bazFactoryBean.setApplicationContext(applicationContext);
+		return bazFactoryBean.feign(context).target(PingClient.class, "http://localhost:" + port);
+	}
+
 	public UnwrapClient unwrapClient() {
 		unwrapFactoryBean.setApplicationContext(applicationContext);
 		return unwrapFactoryBean.feign(context).target(UnwrapClient.class, "http://localhost:" + port);
@@ -163,6 +176,12 @@ public class FeignClientUsingPropertiesTests {
 	@Test
 	public void testBar() {
 		assertThatThrownBy(() -> barClient().bar()).isInstanceOf(RetryableException.class);
+	}
+
+	@Test
+	public void testBaz() {
+		String response = pingClient().ping();
+		assertThat(response).isEqualTo("baz");
 	}
 
 	@Test
@@ -245,7 +264,20 @@ public class FeignClientUsingPropertiesTests {
 		assertThat(response).isEqualTo("OK");
 		List<Capability> capabilities = (List) ReflectionTestUtils.getField(feignBuilder, "capabilities");
 		assertThat(capabilities).hasSize(2).hasAtLeastOneElementOfType(NoOpCapability.class)
-				.hasAtLeastOneElementOfType(MicrometerCapability.class);
+				.hasAtLeastOneElementOfType(MicrometerObservationCapability.class);
+	}
+
+	@Test
+	public void clientShouldContainQueryMapEncoder() {
+		fooFactoryBean.setApplicationContext(applicationContext);
+		Feign.Builder feignBuilder = fooFactoryBean.feign(context);
+		FooClient fooClient = feignBuilder.target(FooClient.class, "http://localhost:" + port);
+
+		String response = fooClient.foo();
+		assertThat(response).isEqualTo("OK");
+		QueryMapEncoder queryMapEncoder = (QueryMapEncoder) ReflectionTestUtils.getField(feignBuilder,
+				"queryMapEncoder");
+		assertThat(queryMapEncoder).isInstanceOf(NoOpQueryMapEncoder.class);
 	}
 
 	@Test
@@ -286,6 +318,13 @@ public class FeignClientUsingPropertiesTests {
 
 	}
 
+	protected interface PingClient {
+
+		@GetMapping(path = "/ping")
+		String ping();
+
+	}
+
 	protected interface UnwrapClient {
 
 		@GetMapping(path = "/bar") // intentionally /bar
@@ -295,8 +334,7 @@ public class FeignClientUsingPropertiesTests {
 
 	protected interface FormClient {
 
-		@RequestMapping(value = "/form", method = RequestMethod.POST,
-				consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+		@PostMapping(value = "/form", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
 		String form(Map<String, String> form);
 
 	}
@@ -328,7 +366,7 @@ public class FeignClientUsingPropertiesTests {
 	@Import(NoSecurityConfiguration.class)
 	protected static class Application {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/foo")
+		@GetMapping("/foo")
 		public String foo(HttpServletRequest request) throws IllegalAccessException {
 			if ("Foo".equals(request.getHeader("Foo")) && "Bar".equals(request.getHeader("Bar"))) {
 				return "OK";
@@ -342,6 +380,11 @@ public class FeignClientUsingPropertiesTests {
 		public String bar() throws InterruptedException {
 			TimeUnit.SECONDS.sleep(2);
 			return "OK";
+		}
+
+		@GetMapping(path = "/ping")
+		public String ping() {
+			return "pong";
 		}
 
 		@PostMapping(path = "/form", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
@@ -383,6 +426,15 @@ public class FeignClientUsingPropertiesTests {
 
 	}
 
+	public static class BazResponseInterceptor implements ResponseInterceptor {
+
+		@Override
+		public Object aroundDecode(InvocationContext invocationContext) {
+			return "baz";
+		}
+
+	}
+
 	public static class NoRetryer implements Retryer {
 
 		@Override
@@ -408,7 +460,10 @@ public class FeignClientUsingPropertiesTests {
 			Map<String, String> form = (Map<String, String>) o;
 			StringBuilder builder = new StringBuilder();
 			form.forEach((key, value) -> {
-				builder.append(key + "=" + value + "&");
+				builder.append(key);
+				builder.append("=");
+				builder.append(value);
+				builder.append("&");
 			});
 
 			requestTemplate.header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE);
@@ -418,6 +473,15 @@ public class FeignClientUsingPropertiesTests {
 	}
 
 	public static class NoOpCapability implements Capability {
+
+	}
+
+	public static class NoOpQueryMapEncoder implements QueryMapEncoder {
+
+		@Override
+		public Map<String, Object> encode(Object o) {
+			return null;
+		}
 
 	}
 

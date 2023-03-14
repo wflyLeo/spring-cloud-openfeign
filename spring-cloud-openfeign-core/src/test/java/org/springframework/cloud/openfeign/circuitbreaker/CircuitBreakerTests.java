@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,15 @@
 
 package org.springframework.cloud.openfeign.circuitbreaker;
 
+import java.io.IOException;
 import java.util.function.Function;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.junit.Before;
-import org.junit.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -38,27 +38,26 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.cloud.openfeign.FallbackFactory;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.test.NoSecurityConfiguration;
+import org.springframework.cloud.test.TestSocketUtils;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.stereotype.Component;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
-import org.springframework.util.SocketUtils;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /**
  * @author Spencer Gibb
  */
-@RunWith(SpringJUnit4ClassRunner.class)
-@SpringBootTest(classes = CircuitBreakerTests.Application.class, webEnvironment = WebEnvironment.DEFINED_PORT, value = {
-		"spring.application.name=springcircuittest", "spring.jmx.enabled=false", "feign.circuitbreaker.enabled=true" })
+@SpringBootTest(classes = CircuitBreakerTests.Application.class, webEnvironment = WebEnvironment.DEFINED_PORT,
+		value = { "spring.application.name=springcircuittest", "spring.jmx.enabled=false",
+				"spring.cloud.openfeign.circuitbreaker.enabled=true" })
 @DirtiesContext
-public class CircuitBreakerTests {
+class CircuitBreakerTests {
 
 	@Autowired
 	MyCircuitBreaker myCircuitBreaker;
@@ -67,25 +66,28 @@ public class CircuitBreakerTests {
 	TestClient testClient;
 
 	@Autowired
+	ExceptionClient exceptionClient;
+
+	@Autowired
 	TestClientWithFactory testClientWithFactory;
 
 	@BeforeAll
-	public static void beforeClass() {
-		System.setProperty("server.port", String.valueOf(SocketUtils.findAvailableTcpPort()));
+	static void beforeClass() {
+		System.setProperty("server.port", String.valueOf(TestSocketUtils.findAvailableTcpPort()));
 	}
 
 	@AfterAll
-	public static void afterClass() {
+	static void afterClass() {
 		System.clearProperty("server.port");
 	}
 
-	@Before
-	public void setup() {
+	@BeforeEach
+	void setup() {
 		this.myCircuitBreaker.clear();
 	}
 
 	@Test
-	public void testSimpleTypeWithFallback() {
+	void testSimpleTypeWithFallback() {
 		Hello hello = testClient.getHello();
 
 		assertThat(hello).as("hello was null").isNotNull();
@@ -94,12 +96,12 @@ public class CircuitBreakerTests {
 	}
 
 	@Test
-	public void test404WithFallback() {
+	void test404WithFallback() {
 		assertThat(testClient.getException()).isEqualTo("Fixed response");
 	}
 
 	@Test
-	public void testSimpleTypeWithFallbackFactory() {
+	void testSimpleTypeWithFallbackFactory() {
 		Hello hello = testClientWithFactory.getHello();
 
 		assertThat(hello).as("hello was null").isNotNull();
@@ -108,18 +110,41 @@ public class CircuitBreakerTests {
 	}
 
 	@Test
-	public void test404WithFallbackFactory() {
+	void test404WithFallbackFactory() {
 		assertThat(testClientWithFactory.getException()).isEqualTo("Fixed response");
+	}
+
+	@Test
+	void testRuntimeExceptionUnwrapped() {
+		assertThatExceptionOfType(UnsupportedOperationException.class)
+				.isThrownBy(() -> exceptionClient.getRuntimeException());
+	}
+
+	@Test
+	void testCheckedExceptionWrapped() {
+		assertThatExceptionOfType(IllegalStateException.class).isThrownBy(() -> exceptionClient.getCheckedException());
 	}
 
 	@FeignClient(name = "test", url = "http://localhost:${server.port}/", fallback = Fallback.class)
 	protected interface TestClient {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		Hello getHello();
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hellonotfound")
+		@GetMapping("/hellonotfound")
 		String getException();
+
+	}
+
+	@FeignClient(name = "exceptionClient", url = "http://localhost:${server.port}/",
+			fallbackFactory = ExceptionThrowingFallbackFactory.class)
+	protected interface ExceptionClient {
+
+		@GetMapping("/runtimeException")
+		Hello getRuntimeException();
+
+		@GetMapping("/runtimeException")
+		Hello getCheckedException() throws IOException;
 
 	}
 
@@ -142,10 +167,10 @@ public class CircuitBreakerTests {
 			fallbackFactory = TestFallbackFactory.class)
 	protected interface TestClientWithFactory {
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		Hello getHello();
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hellonotfound")
+		@GetMapping("/hellonotfound")
 		String getException();
 
 	}
@@ -156,6 +181,25 @@ public class CircuitBreakerTests {
 		@Override
 		public FallbackWithFactory create(Throwable cause) {
 			return new FallbackWithFactory();
+		}
+
+	}
+
+	static class ExceptionThrowingFallbackFactory implements FallbackFactory<ExceptionClient> {
+
+		@Override
+		public ExceptionClient create(Throwable cause) {
+			return new ExceptionClient() {
+				@Override
+				public Hello getRuntimeException() {
+					throw new UnsupportedOperationException("Not implemented!");
+				}
+
+				@Override
+				public Hello getCheckedException() throws IOException {
+					throw new IOException();
+				}
+			};
 		}
 
 	}
@@ -177,7 +221,7 @@ public class CircuitBreakerTests {
 	@Configuration(proxyBeanMethods = false)
 	@EnableAutoConfiguration
 	@RestController
-	@EnableFeignClients(clients = { TestClient.class, TestClientWithFactory.class })
+	@EnableFeignClients(clients = { TestClient.class, TestClientWithFactory.class, ExceptionClient.class })
 	@Import(NoSecurityConfiguration.class)
 	protected static class Application implements TestClient {
 
@@ -188,6 +232,7 @@ public class CircuitBreakerTests {
 			return new MyCircuitBreaker();
 		}
 
+		@SuppressWarnings("rawtypes")
 		@Bean
 		CircuitBreakerFactory circuitBreakerFactory(MyCircuitBreaker myCircuitBreaker) {
 			return new CircuitBreakerFactory() {
@@ -227,6 +272,11 @@ public class CircuitBreakerTests {
 		@Bean
 		TestFallbackFactory testFallbackFactory() {
 			return new TestFallbackFactory();
+		}
+
+		@Bean
+		ExceptionThrowingFallbackFactory exceptionThrowingFallbackFactory() {
+			return new ExceptionThrowingFallbackFactory();
 		}
 
 	}

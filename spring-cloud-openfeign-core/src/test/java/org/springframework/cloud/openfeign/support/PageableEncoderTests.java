@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,17 +18,15 @@ package org.springframework.cloud.openfeign.support;
 
 import feign.RequestTemplate;
 import feign.codec.Encoder;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.cloud.openfeign.FeignContext;
+import org.springframework.cloud.openfeign.FeignClientFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
@@ -37,12 +35,12 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
  * Tests the pagination encoding and sorting.
  *
  * @author Charlie Mordant.
+ * @author Yanming Zhou
  */
-@RunWith(SpringJUnit4ClassRunner.class)
 @SpringBootTest(classes = SpringEncoderTests.Application.class, webEnvironment = RANDOM_PORT,
 		value = { "spring.application.name=springencodertest", "spring.jmx.enabled=false" })
 @DirtiesContext
-public class PageableEncoderTests {
+class PageableEncoderTests {
 
 	public static final int PAGE = 1;
 
@@ -53,10 +51,22 @@ public class PageableEncoderTests {
 	public static final String SORT_1 = "sort1";
 
 	@Autowired
-	private FeignContext context;
+	private FeignClientFactory context;
+
+	protected String getPageParameter() {
+		return "page";
+	}
+
+	protected String getSizeParameter() {
+		return "size";
+	}
+
+	protected String getSortParameter() {
+		return "sort";
+	}
 
 	@Test
-	public void testPaginationAndSortingRequest() {
+	void testPaginationAndSortingRequest() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
@@ -65,11 +75,11 @@ public class PageableEncoderTests {
 		// Request queries shall contain three entries
 		assertThat(request.queries()).hasSize(3);
 		// Request page shall contain page
-		assertThat(request.queries().get("page")).contains(String.valueOf(PAGE));
+		assertThat(request.queries().get(getPageParameter())).contains(String.valueOf(PAGE));
 		// Request size shall contain size
-		assertThat(request.queries().get("size")).contains(String.valueOf(SIZE));
+		assertThat(request.queries().get(getSizeParameter())).contains(String.valueOf(SIZE));
 		// Request sort size shall contain sort entries
-		assertThat(request.queries().get("sort")).hasSize(2);
+		assertThat(request.queries().get(getSortParameter())).hasSize(2);
 	}
 
 	private Pageable createPageAndSortRequest() {
@@ -77,18 +87,18 @@ public class PageableEncoderTests {
 	}
 
 	@Test
-	public void testPaginationRequest() {
+	void testPaginationRequest() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
 		encoder.encode(createPageAndRequest(), null, request);
 		assertThat(request.queries().size()).isEqualTo(2);
 		// Request page shall contain page
-		assertThat(request.queries().get("page")).contains(String.valueOf(PAGE));
+		assertThat(request.queries().get(getPageParameter())).contains(String.valueOf(PAGE));
 		// Request size shall contain size
-		assertThat(request.queries().get("size")).contains(String.valueOf(SIZE));
+		assertThat(request.queries().get(getSizeParameter())).contains(String.valueOf(SIZE));
 		// Request sort size shall contain sort entries
-		assertThat(request.queries()).doesNotContainKey("sort");
+		assertThat(request.queries()).doesNotContainKey(getSortParameter());
 	}
 
 	private Pageable createPageAndRequest() {
@@ -96,7 +106,7 @@ public class PageableEncoderTests {
 	}
 
 	@Test
-	public void testSortingRequest() {
+	void testSortingRequest() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
@@ -105,7 +115,7 @@ public class PageableEncoderTests {
 		// Request queries shall contain three entries
 		assertThat(request.queries().size()).isEqualTo(1);
 		// Request sort size shall contain sort entries
-		assertThat(request.queries().get("sort")).hasSize(2);
+		assertThat(request.queries().get(getSortParameter())).hasSize(2);
 	}
 
 	private Sort createSort() {
@@ -113,7 +123,7 @@ public class PageableEncoderTests {
 	}
 
 	@Test
-	public void testUnpagedRequest() {
+	void testUnpagedRequest() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();

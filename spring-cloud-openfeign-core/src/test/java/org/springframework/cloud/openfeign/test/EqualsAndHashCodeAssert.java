@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2021 the original author or authors.
+ * Copyright 2021-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link Object#equals(Object)} and {@link Object#hashCode()}.
  *
  * @author Jonatan Ivanov
+ * @author Olga Maciaszek-Sharma
  */
-public class EqualsAndHashCodeAssert {
+public final class EqualsAndHashCodeAssert {
+
+	private EqualsAndHashCodeAssert() {
+		throw new IllegalStateException("Can't instantiate a utility class");
+	}
 
 	/**
 	 * Checks if equals is reflexive: for any non-null reference value x, x.equals(x)
@@ -99,7 +104,7 @@ public class EqualsAndHashCodeAssert {
 	 */
 	public static void assertEqualsAndHashCodeConsistency(Object objectOne, Object objectTwo) {
 		assertThat(objectOne.equals(objectTwo)).isTrue();
-		assertThat(objectOne.hashCode()).isEqualTo(objectTwo.hashCode());
+		assertThat(objectOne).hasSameHashCodeAs(objectTwo);
 	}
 
 }

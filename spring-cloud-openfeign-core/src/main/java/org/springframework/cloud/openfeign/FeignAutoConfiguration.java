@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2023 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,31 +16,40 @@
 
 package org.springframework.cloud.openfeign;
 
-import java.io.IOException;
+import java.lang.reflect.Method;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
-import javax.annotation.PreDestroy;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 import com.fasterxml.jackson.databind.Module;
+import feign.Capability;
 import feign.Client;
 import feign.Feign;
-import feign.RequestInterceptor;
+import feign.Target;
 import feign.hc5.ApacheHttp5Client;
-import feign.httpclient.ApacheHttpClient;
 import feign.okhttp.OkHttpClient;
+import jakarta.annotation.PreDestroy;
 import okhttp3.ConnectionPool;
+import okhttp3.Protocol;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.config.RequestConfig;
-import org.apache.http.config.RegistryBuilder;
-import org.apache.http.conn.HttpClientConnectionManager;
-import org.apache.http.impl.client.CloseableHttpClient;
 
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
+import org.springframework.aot.hint.TypeReference;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -48,15 +57,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cache.interceptor.CacheInterceptor;
 import org.springframework.cloud.client.actuator.HasFeatures;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreaker;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
-import org.springframework.cloud.commons.httpclient.ApacheHttpClientConnectionManagerFactory;
-import org.springframework.cloud.commons.httpclient.ApacheHttpClientFactory;
-import org.springframework.cloud.commons.httpclient.OkHttpClientConnectionPoolFactory;
-import org.springframework.cloud.commons.httpclient.OkHttpClientFactory;
-import org.springframework.cloud.openfeign.security.OAuth2FeignRequestInterceptor;
-import org.springframework.cloud.openfeign.support.DefaultGzipDecoderConfiguration;
+import org.springframework.cloud.openfeign.aot.FeignChildContextInitializer;
+import org.springframework.cloud.openfeign.aot.FeignClientBeanFactoryInitializationAotProcessor;
+import org.springframework.cloud.openfeign.security.OAuth2AccessTokenInterceptor;
 import org.springframework.cloud.openfeign.support.FeignEncoderProperties;
 import org.springframework.cloud.openfeign.support.FeignHttpClientProperties;
 import org.springframework.cloud.openfeign.support.PageJacksonModule;
@@ -65,10 +72,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
-import org.springframework.security.oauth2.client.OAuth2ClientContext;
-import org.springframework.security.oauth2.client.resource.OAuth2ProtectedResourceDetails;
+import org.springframework.security.oauth2.client.AuthorizedClientServiceOAuth2AuthorizedClientManager;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientManager;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.util.ClassUtils;
 
 /**
  * @author Spencer Gibb
@@ -79,12 +90,16 @@ import org.springframework.security.oauth2.client.resource.OAuth2ProtectedResour
  * @author Olga Maciaszek-Sharma
  * @author Nguyen Ky Thanh
  * @author Andrii Bohutskyi
+ * @author Kwangyong Kim
+ * @author Sam Kruglov
+ * @author Wojciech Mąka
+ * @author Dangzhicairang(小水牛)
+ * @author changjin wei(魏昌进)
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnClass(Feign.class)
 @EnableConfigurationProperties({ FeignClientProperties.class, FeignHttpClientProperties.class,
 		FeignEncoderProperties.class })
-@Import(DefaultGzipDecoderConfiguration.class)
 public class FeignAutoConfiguration {
 
 	private static final Log LOG = LogFactory.getLog(FeignAutoConfiguration.class);
@@ -98,15 +113,35 @@ public class FeignAutoConfiguration {
 	}
 
 	@Bean
-	public FeignContext feignContext() {
-		FeignContext context = new FeignContext();
+	public FeignClientFactory feignContext() {
+		FeignClientFactory context = new FeignClientFactory();
 		context.setConfigurations(this.configurations);
 		return context;
 	}
 
+	@Bean
+	static FeignChildContextInitializer feignChildContextInitializer(GenericApplicationContext parentContext,
+			FeignClientFactory feignClientFactory) {
+		return new FeignChildContextInitializer(parentContext, feignClientFactory);
+	}
+
+	@Bean
+	static FeignClientBeanFactoryInitializationAotProcessor feignClientBeanFactoryInitializationCodeGenerator(
+			GenericApplicationContext applicationContext, FeignClientFactory feignClientFactory) {
+		return new FeignClientBeanFactoryInitializationAotProcessor(applicationContext, feignClientFactory);
+	}
+
+	@Bean
+	@ConditionalOnProperty(value = "spring.cloud.openfeign.cache.enabled", matchIfMissing = true)
+	@ConditionalOnBean(CacheInterceptor.class)
+	public Capability cachingCapability(CacheInterceptor cacheInterceptor) {
+		return new CachingCapability(cacheInterceptor);
+	}
+
 	@Configuration(proxyBeanMethods = false)
 	@ConditionalOnClass({ Module.class, Page.class, Sort.class })
-	@ConditionalOnProperty(value = "feign.autoconfiguration.jackson.enabled", havingValue = "true")
+	@ConditionalOnProperty(value = "spring.cloud.openfeign.autoconfiguration.jackson.enabled", havingValue = "true",
+			matchIfMissing = true)
 	protected static class FeignJacksonConfiguration {
 
 		@Bean
@@ -137,7 +172,7 @@ public class FeignAutoConfiguration {
 
 	@Configuration(proxyBeanMethods = false)
 	@ConditionalOnClass(CircuitBreaker.class)
-	@ConditionalOnProperty(value = "feign.circuitbreaker.enabled", havingValue = "true")
+	@ConditionalOnProperty(value = "spring.cloud.openfeign.circuitbreaker.enabled", havingValue = "true")
 	protected static class CircuitBreakerPresentFeignTargeterConfiguration {
 
 		@Bean
@@ -147,11 +182,48 @@ public class FeignAutoConfiguration {
 		}
 
 		@Bean
+		@ConditionalOnMissingBean(CircuitBreakerNameResolver.class)
+		@ConditionalOnProperty(value = "spring.cloud.openfeign.circuitbreaker.alphanumeric-ids.enabled",
+				havingValue = "false")
+		public CircuitBreakerNameResolver circuitBreakerNameResolver() {
+			return new DefaultCircuitBreakerNameResolver();
+		}
+
+		@Bean
+		@ConditionalOnMissingBean(CircuitBreakerNameResolver.class)
+		@ConditionalOnProperty(value = "spring.cloud.openfeign.circuitbreaker.alphanumeric-ids.enabled",
+				havingValue = "true", matchIfMissing = true)
+		public CircuitBreakerNameResolver alphanumericCircuitBreakerNameResolver() {
+			return new AlphanumericCircuitBreakerNameResolver();
+		}
+
+		@SuppressWarnings("rawtypes")
+		@Bean
 		@ConditionalOnMissingBean
 		@ConditionalOnBean(CircuitBreakerFactory.class)
 		public Targeter circuitBreakerFeignTargeter(CircuitBreakerFactory circuitBreakerFactory,
-				@Value("${feign.circuitbreaker.group.enabled:false}") boolean circuitBreakerGroupEnabled) {
-			return new FeignCircuitBreakerTargeter(circuitBreakerFactory, circuitBreakerGroupEnabled);
+				@Value("${spring.cloud.openfeign.circuitbreaker.group.enabled:false}") boolean circuitBreakerGroupEnabled,
+				CircuitBreakerNameResolver circuitBreakerNameResolver) {
+			return new FeignCircuitBreakerTargeter(circuitBreakerFactory, circuitBreakerGroupEnabled,
+					circuitBreakerNameResolver);
+		}
+
+		static class DefaultCircuitBreakerNameResolver implements CircuitBreakerNameResolver {
+
+			@Override
+			public String resolveCircuitBreakerName(String feignClientName, Target<?> target, Method method) {
+				return Feign.configKey(target.type(), method);
+			}
+
+		}
+
+		static class AlphanumericCircuitBreakerNameResolver extends DefaultCircuitBreakerNameResolver {
+
+			@Override
+			public String resolveCircuitBreakerName(String feignClientName, Target<?> target, Method method) {
+				return super.resolveCircuitBreakerName(feignClientName, target, method).replaceAll("[^a-zA-Z0-9]", "");
+			}
+
 		}
 
 	}
@@ -161,101 +233,60 @@ public class FeignAutoConfiguration {
 	// see corresponding configurations in FeignLoadBalancerAutoConfiguration
 	// for load-balanced clients.
 	@Configuration(proxyBeanMethods = false)
-	@ConditionalOnClass(ApacheHttpClient.class)
-	@ConditionalOnMissingBean(CloseableHttpClient.class)
-	@ConditionalOnProperty(value = "feign.httpclient.enabled", matchIfMissing = true)
-	@Conditional(HttpClient5DisabledConditions.class)
-	protected static class HttpClientFeignConfiguration {
-
-		private final Timer connectionManagerTimer = new Timer(
-				"FeignApacheHttpClientConfiguration.connectionManagerTimer", true);
-
-		@Autowired(required = false)
-		private RegistryBuilder registryBuilder;
-
-		private CloseableHttpClient httpClient;
-
-		@Bean
-		@ConditionalOnMissingBean(HttpClientConnectionManager.class)
-		public HttpClientConnectionManager connectionManager(
-				ApacheHttpClientConnectionManagerFactory connectionManagerFactory,
-				FeignHttpClientProperties httpClientProperties) {
-			final HttpClientConnectionManager connectionManager = connectionManagerFactory.newConnectionManager(
-					httpClientProperties.isDisableSslValidation(), httpClientProperties.getMaxConnections(),
-					httpClientProperties.getMaxConnectionsPerRoute(), httpClientProperties.getTimeToLive(),
-					httpClientProperties.getTimeToLiveUnit(), this.registryBuilder);
-			this.connectionManagerTimer.schedule(new TimerTask() {
-				@Override
-				public void run() {
-					connectionManager.closeExpiredConnections();
-				}
-			}, 30000, httpClientProperties.getConnectionTimerRepeat());
-			return connectionManager;
-		}
-
-		@Bean
-		public CloseableHttpClient httpClient(ApacheHttpClientFactory httpClientFactory,
-				HttpClientConnectionManager httpClientConnectionManager,
-				FeignHttpClientProperties httpClientProperties) {
-			RequestConfig defaultRequestConfig = RequestConfig.custom()
-					.setConnectTimeout(httpClientProperties.getConnectionTimeout())
-					.setRedirectsEnabled(httpClientProperties.isFollowRedirects()).build();
-			this.httpClient = httpClientFactory.createBuilder().setConnectionManager(httpClientConnectionManager)
-					.setDefaultRequestConfig(defaultRequestConfig).build();
-			return this.httpClient;
-		}
-
-		@Bean
-		@ConditionalOnMissingBean(Client.class)
-		public Client feignClient(HttpClient httpClient) {
-			return new ApacheHttpClient(httpClient);
-		}
-
-		@PreDestroy
-		public void destroy() {
-			this.connectionManagerTimer.cancel();
-			if (this.httpClient != null) {
-				try {
-					this.httpClient.close();
-				}
-				catch (IOException e) {
-					if (LOG.isErrorEnabled()) {
-						LOG.error("Could not correctly close httpClient.");
-					}
-				}
-			}
-		}
-
-	}
-
-	@Configuration(proxyBeanMethods = false)
 	@ConditionalOnClass(OkHttpClient.class)
 	@ConditionalOnMissingBean(okhttp3.OkHttpClient.class)
-	@ConditionalOnProperty("feign.okhttp.enabled")
+	@ConditionalOnProperty("spring.cloud.openfeign.okhttp.enabled")
 	protected static class OkHttpFeignConfiguration {
 
 		private okhttp3.OkHttpClient okHttpClient;
 
 		@Bean
-		@ConditionalOnMissingBean(ConnectionPool.class)
-		public ConnectionPool httpClientConnectionPool(FeignHttpClientProperties httpClientProperties,
-				OkHttpClientConnectionPoolFactory connectionPoolFactory) {
-			Integer maxTotalConnections = httpClientProperties.getMaxConnections();
-			Long timeToLive = httpClientProperties.getTimeToLive();
-			TimeUnit ttlUnit = httpClientProperties.getTimeToLiveUnit();
-			return connectionPoolFactory.create(maxTotalConnections, timeToLive, ttlUnit);
+		@ConditionalOnMissingBean
+		public okhttp3.OkHttpClient.Builder okHttpClientBuilder() {
+			return new okhttp3.OkHttpClient.Builder();
 		}
 
 		@Bean
-		public okhttp3.OkHttpClient client(OkHttpClientFactory httpClientFactory, ConnectionPool connectionPool,
+		@ConditionalOnMissingBean(ConnectionPool.class)
+		public ConnectionPool httpClientConnectionPool(FeignHttpClientProperties httpClientProperties) {
+			int maxTotalConnections = httpClientProperties.getMaxConnections();
+			long timeToLive = httpClientProperties.getTimeToLive();
+			TimeUnit ttlUnit = httpClientProperties.getTimeToLiveUnit();
+			return new ConnectionPool(maxTotalConnections, timeToLive, ttlUnit);
+		}
+
+		@Bean
+		public okhttp3.OkHttpClient okHttpClient(okhttp3.OkHttpClient.Builder builder, ConnectionPool connectionPool,
 				FeignHttpClientProperties httpClientProperties) {
-			Boolean followRedirects = httpClientProperties.isFollowRedirects();
-			Integer connectTimeout = httpClientProperties.getConnectionTimeout();
-			Boolean disableSslValidation = httpClientProperties.isDisableSslValidation();
-			this.okHttpClient = httpClientFactory.createBuilder(disableSslValidation)
-					.connectTimeout(connectTimeout, TimeUnit.MILLISECONDS).followRedirects(followRedirects)
-					.connectionPool(connectionPool).build();
+			boolean followRedirects = httpClientProperties.isFollowRedirects();
+			int connectTimeout = httpClientProperties.getConnectionTimeout();
+			boolean disableSslValidation = httpClientProperties.isDisableSslValidation();
+			Duration readTimeout = httpClientProperties.getOkHttp().getReadTimeout();
+			List<Protocol> protocols = httpClientProperties.getOkHttp().getProtocols().stream().map(Protocol::valueOf)
+					.collect(Collectors.toList());
+			if (disableSslValidation) {
+				disableSsl(builder);
+			}
+			this.okHttpClient = builder.connectTimeout(connectTimeout, TimeUnit.MILLISECONDS)
+					.followRedirects(followRedirects).readTimeout(readTimeout).connectionPool(connectionPool)
+					.protocols(protocols).build();
 			return this.okHttpClient;
+		}
+
+		private void disableSsl(okhttp3.OkHttpClient.Builder builder) {
+			try {
+				X509TrustManager disabledTrustManager = new DisableValidationTrustManager();
+				TrustManager[] trustManagers = new TrustManager[1];
+				trustManagers[0] = disabledTrustManager;
+				SSLContext sslContext = SSLContext.getInstance("SSL");
+				sslContext.init(null, trustManagers, new java.security.SecureRandom());
+				SSLSocketFactory disabledSSLSocketFactory = sslContext.getSocketFactory();
+				builder.sslSocketFactory(disabledSSLSocketFactory, disabledTrustManager);
+				builder.hostnameVerifier(new TrustAllHostnames());
+			}
+			catch (NoSuchAlgorithmException | KeyManagementException e) {
+				LOG.warn("Error setting SSLSocketFactory in OKHttpClient", e);
+			}
 		}
 
 		@PreDestroy
@@ -272,12 +303,49 @@ public class FeignAutoConfiguration {
 			return new OkHttpClient(client);
 		}
 
+		/**
+		 * A {@link X509TrustManager} that does not validate SSL certificates.
+		 */
+		class DisableValidationTrustManager implements X509TrustManager {
+
+			@Override
+			public void checkClientTrusted(X509Certificate[] x509Certificates, String s) {
+			}
+
+			@Override
+			public void checkServerTrusted(X509Certificate[] x509Certificates, String s) {
+			}
+
+			@Override
+			public X509Certificate[] getAcceptedIssuers() {
+				return new X509Certificate[0];
+			}
+
+		}
+
+		/**
+		 * A {@link HostnameVerifier} that does not validate any hostnames.
+		 */
+		class TrustAllHostnames implements HostnameVerifier {
+
+			@Override
+			public boolean verify(String s, SSLSession sslSession) {
+				return true;
+			}
+
+		}
+
 	}
 
+	// the following configuration is for alternate feign clients if
+	// SC loadbalancer is not on the class path.
+	// see corresponding configurations in FeignLoadBalancerAutoConfiguration
+	// for load-balanced clients.
 	@Configuration(proxyBeanMethods = false)
 	@ConditionalOnClass(ApacheHttp5Client.class)
 	@ConditionalOnMissingBean(org.apache.hc.client5.http.impl.classic.CloseableHttpClient.class)
-	@ConditionalOnProperty(value = "feign.httpclient.hc5.enabled", havingValue = "true")
+	@ConditionalOnProperty(value = "spring.cloud.openfeign.httpclient.hc5.enabled", havingValue = "true",
+			matchIfMissing = true)
 	@Import(org.springframework.cloud.openfeign.clientconfig.HttpClient5FeignConfiguration.class)
 	protected static class HttpClient5FeignConfiguration {
 
@@ -290,18 +358,43 @@ public class FeignAutoConfiguration {
 	}
 
 	@Configuration(proxyBeanMethods = false)
-	@ConditionalOnClass(OAuth2ClientContext.class)
-	@ConditionalOnProperty("feign.oauth2.enabled")
+	@ConditionalOnClass(OAuth2AuthorizedClientManager.class)
+	@ConditionalOnProperty("spring.cloud.openfeign.oauth2.enabled")
 	protected static class Oauth2FeignConfiguration {
 
 		@Bean
-		@ConditionalOnMissingBean(OAuth2FeignRequestInterceptor.class)
-		@ConditionalOnBean({ OAuth2ClientContext.class, OAuth2ProtectedResourceDetails.class })
-		public RequestInterceptor oauth2FeignRequestInterceptor(OAuth2ClientContext oAuth2ClientContext,
-				OAuth2ProtectedResourceDetails resource) {
-			return new OAuth2FeignRequestInterceptor(oAuth2ClientContext, resource);
+		@ConditionalOnBean({ OAuth2AuthorizedClientService.class, ClientRegistrationRepository.class })
+		@ConditionalOnMissingBean
+		OAuth2AuthorizedClientManager feignOAuth2AuthorizedClientManager(
+				ClientRegistrationRepository clientRegistrationRepository,
+				OAuth2AuthorizedClientService oAuth2AuthorizedClientService) {
+			return new AuthorizedClientServiceOAuth2AuthorizedClientManager(clientRegistrationRepository,
+					oAuth2AuthorizedClientService);
+
 		}
 
+		@Bean
+		@ConditionalOnBean(OAuth2AuthorizedClientManager.class)
+		public OAuth2AccessTokenInterceptor defaultOAuth2AccessTokenInterceptor(
+				@Value("${spring.cloud.openfeign.oauth2.clientRegistrationId:}") String clientRegistrationId,
+				OAuth2AuthorizedClientManager oAuth2AuthorizedClientManager) {
+			return new OAuth2AccessTokenInterceptor(clientRegistrationId, oAuth2AuthorizedClientManager);
+		}
+
+	}
+
+}
+
+class FeignHints implements RuntimeHintsRegistrar {
+
+	@Override
+	public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+		if (!ClassUtils.isPresent("feign.Feign", classLoader)) {
+			return;
+		}
+		hints.reflection().registerType(TypeReference.of(FeignClientFactoryBean.class),
+				hint -> hint.withMembers(MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+						MemberCategory.INVOKE_DECLARED_METHODS, MemberCategory.DECLARED_FIELDS));
 	}
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,15 +26,15 @@ import java.util.List;
 import feign.RequestTemplate;
 import feign.codec.EncodeException;
 import feign.codec.Encoder;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.cloud.openfeign.FeignContext;
+import org.springframework.cloud.openfeign.FeignClientFactory;
 import org.springframework.cloud.openfeign.encoding.HttpEncoding;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -52,7 +52,6 @@ import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.http.converter.ResourceHttpMessageConverter;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -60,6 +59,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.HttpHeaders.ACCEPT;
 import static org.springframework.http.HttpHeaders.CONTENT_LENGTH;
 import static org.springframework.http.HttpHeaders.CONTENT_TYPE;
+import static org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED_VALUE;
 import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
 import static org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE;
 import static org.springframework.http.MediaType.TEXT_PLAIN_VALUE;
@@ -68,15 +68,16 @@ import static org.springframework.http.MediaType.TEXT_PLAIN_VALUE;
  * @author Spencer Gibb
  * @author Olga Maciaszek-Sharma
  * @author Ahmad Mozafarnia
+ * @author Can Bezmen
+ * @author Szymon Linowski
  */
-@RunWith(SpringJUnit4ClassRunner.class)
 @SpringBootTest(classes = SpringEncoderTests.Application.class, webEnvironment = WebEnvironment.RANDOM_PORT,
 		value = { "spring.application.name=springencodertest", "spring.jmx.enabled=false" })
 @DirtiesContext
-public class SpringEncoderTests {
+class SpringEncoderTests {
 
 	@Autowired
-	private FeignContext context;
+	private FeignClientFactory context;
 
 	@Autowired
 	@Qualifier("myHttpMessageConverter")
@@ -90,7 +91,7 @@ public class SpringEncoderTests {
 	private GenericHttpMessageConverter<?> myGenericConverter;
 
 	@Test
-	public void testCustomHttpMessageConverter() {
+	void testCustomHttpMessageConverter() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
@@ -110,12 +111,12 @@ public class SpringEncoderTests {
 
 	// gh-225
 	@Test
-	public void testCustomGenericHttpMessageConverter() {
+	void testCustomGenericHttpMessageConverter() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
 
-		ParameterizedTypeReference<List<String>> stringListType = new ParameterizedTypeReference<List<String>>() {
+		ParameterizedTypeReference<List<String>> stringListType = new ParameterizedTypeReference<>() {
 		};
 
 		request.header(HttpEncoding.CONTENT_TYPE, "application/mygenerictype");
@@ -133,7 +134,7 @@ public class SpringEncoderTests {
 	}
 
 	@Test
-	public void testBinaryData() {
+	void testBinaryData() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 
@@ -145,19 +146,21 @@ public class SpringEncoderTests {
 				.isEqualTo(APPLICATION_OCTET_STREAM_VALUE);
 	}
 
-	@Test(expected = EncodeException.class)
-	public void testMultipartFile1() {
+	@Test
+	void testMultipartFile1() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
 
 		MultipartFile multipartFile = new MockMultipartFile("test_multipart_file", "hi".getBytes());
-		encoder.encode(multipartFile, MultipartFile.class, request);
+
+		Assertions.assertThatExceptionOfType(EncodeException.class)
+				.isThrownBy(() -> encoder.encode(multipartFile, MultipartFile.class, request));
 	}
 
 	// gh-105, gh-107
 	@Test
-	public void testMultipartFile2() {
+	void testMultipartFile2() {
 		Encoder encoder = this.context.getInstance("foo", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
@@ -176,11 +179,22 @@ public class SpringEncoderTests {
 				.isEqualTo(MULTIPART_FORM_DATA_VALUE);
 		assertThat(((List) request.headers().get(CONTENT_LENGTH)).get(0))
 				.as("Request Content-Length is not equal to 186").isEqualTo("186");
-		assertThat(new String(request.requestBody().asBytes())).as("Body content cannot be decoded").contains("hi");
+		assertThat(new String(request.body())).as("Body content cannot be decoded").contains("hi");
 	}
 
 	@Test
-	public void testNoCharsetForBinaryFiles() {
+	void testFromURLEncodedValue() {
+		Encoder encoder = context.getInstance("formUrlEncoded", Encoder.class);
+		assertThat(encoder).isNotNull();
+		RequestTemplate request = new RequestTemplate();
+		request.header(CONTENT_TYPE, APPLICATION_FORM_URLENCODED_VALUE);
+		String body = "test";
+		encoder.encode(body, String.class, request);
+		assertThat(new String(request.body())).as("Body content cannot be decoded").contains(body);
+	}
+
+	@Test
+	void testNoCharsetForBinaryFiles() {
 		Encoder encoder = context.getInstance("test", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
@@ -193,7 +207,7 @@ public class SpringEncoderTests {
 	}
 
 	@Test
-	public void testUTF8CharsetForTextFiles() {
+	void testUTF8CharsetForTextFiles() {
 		Encoder encoder = context.getInstance("test", Encoder.class);
 		assertThat(encoder).isNotNull();
 		RequestTemplate request = new RequestTemplate();
@@ -291,8 +305,7 @@ public class SpringEncoderTests {
 			}
 
 			private boolean isStringList(Type type) {
-				if (type instanceof ParameterizedType) {
-					ParameterizedType parameterizedType = (ParameterizedType) type;
+				if (type instanceof ParameterizedType parameterizedType) {
 					return parameterizedType.getRawType() == List.class
 							&& parameterizedType.getActualTypeArguments()[0] == String.class;
 				}

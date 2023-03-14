@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,10 @@ import feign.codec.Encoder;
 import feign.form.MultipartFormContentProcessor;
 import feign.form.spring.SpringFormEncoder;
 import feign.micrometer.MicrometerCapability;
+import feign.micrometer.MicrometerObservationCapability;
 import feign.optionals.OptionalDecoder;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 
 import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -47,6 +49,7 @@ import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.cloud.openfeign.clientconfig.FeignClientConfigurer;
 import org.springframework.cloud.openfeign.support.AbstractFormWriter;
 import org.springframework.cloud.openfeign.support.FeignEncoderProperties;
+import org.springframework.cloud.openfeign.support.HttpMessageConverterCustomizer;
 import org.springframework.cloud.openfeign.support.PageableSpringEncoder;
 import org.springframework.cloud.openfeign.support.PageableSpringQueryMapEncoder;
 import org.springframework.cloud.openfeign.support.ResponseEntityDecoder;
@@ -70,6 +73,7 @@ import static feign.form.ContentType.MULTIPART;
  * @author Jonatan Ivanov
  * @author Olga Maciaszek-Sharma
  * @author Hyeonmin Park
+ * @author Yanming Zhou
  */
 @Configuration(proxyBeanMethods = false)
 public class FeignClientsConfiguration {
@@ -97,22 +101,25 @@ public class FeignClientsConfiguration {
 
 	@Bean
 	@ConditionalOnMissingBean
-	public Decoder feignDecoder() {
-		return new OptionalDecoder(new ResponseEntityDecoder(new SpringDecoder(this.messageConverters)));
+	public Decoder feignDecoder(ObjectProvider<HttpMessageConverterCustomizer> customizers) {
+		return new OptionalDecoder(new ResponseEntityDecoder(new SpringDecoder(messageConverters, customizers)));
 	}
 
 	@Bean
 	@ConditionalOnMissingBean
 	@ConditionalOnMissingClass("org.springframework.data.domain.Pageable")
-	public Encoder feignEncoder(ObjectProvider<AbstractFormWriter> formWriterProvider) {
-		return springEncoder(formWriterProvider, encoderProperties);
+	public Encoder feignEncoder(ObjectProvider<AbstractFormWriter> formWriterProvider,
+			ObjectProvider<HttpMessageConverterCustomizer> customizers) {
+		return springEncoder(formWriterProvider, encoderProperties, customizers);
 	}
 
 	@Bean
 	@ConditionalOnClass(name = "org.springframework.data.domain.Pageable")
 	@ConditionalOnMissingBean
-	public Encoder feignEncoderPageable(ObjectProvider<AbstractFormWriter> formWriterProvider) {
-		PageableSpringEncoder encoder = new PageableSpringEncoder(springEncoder(formWriterProvider, encoderProperties));
+	public Encoder feignEncoderPageable(ObjectProvider<AbstractFormWriter> formWriterProvider,
+			ObjectProvider<HttpMessageConverterCustomizer> customizers) {
+		PageableSpringEncoder encoder = new PageableSpringEncoder(
+				springEncoder(formWriterProvider, encoderProperties, customizers));
 
 		if (springDataWebProperties != null) {
 			encoder.setPageParameter(springDataWebProperties.getPageable().getPageParameter());
@@ -126,20 +133,26 @@ public class FeignClientsConfiguration {
 	@ConditionalOnClass(name = "org.springframework.data.domain.Pageable")
 	@ConditionalOnMissingBean
 	public QueryMapEncoder feignQueryMapEncoderPageable() {
-		return new PageableSpringQueryMapEncoder();
+		PageableSpringQueryMapEncoder queryMapEncoder = new PageableSpringQueryMapEncoder();
+		if (springDataWebProperties != null) {
+			queryMapEncoder.setPageParameter(springDataWebProperties.getPageable().getPageParameter());
+			queryMapEncoder.setSizeParameter(springDataWebProperties.getPageable().getSizeParameter());
+			queryMapEncoder.setSortParameter(springDataWebProperties.getSort().getSortParameter());
+		}
+		return queryMapEncoder;
 	}
 
 	@Bean
 	@ConditionalOnMissingBean
 	public Contract feignContract(ConversionService feignConversionService) {
 		boolean decodeSlash = feignClientProperties == null || feignClientProperties.isDecodeSlash();
-		return new SpringMvcContract(this.parameterProcessors, feignConversionService, decodeSlash);
+		return new SpringMvcContract(parameterProcessors, feignConversionService, decodeSlash);
 	}
 
 	@Bean
 	public FormattingConversionService feignConversionService() {
 		FormattingConversionService conversionService = new DefaultFormattingConversionService();
-		for (FeignFormatterRegistrar feignFormatterRegistrar : this.feignFormatterRegistrars) {
+		for (FeignFormatterRegistrar feignFormatterRegistrar : feignFormatterRegistrars) {
 			feignFormatterRegistrar.registerFormatters(conversionService);
 		}
 		return conversionService;
@@ -154,7 +167,7 @@ public class FeignClientsConfiguration {
 	@Bean
 	@ConditionalOnMissingBean(FeignLoggerFactory.class)
 	public FeignLoggerFactory feignLoggerFactory() {
-		return new DefaultFeignLoggerFactory(this.logger);
+		return new DefaultFeignLoggerFactory(logger);
 	}
 
 	@Bean
@@ -165,14 +178,15 @@ public class FeignClientsConfiguration {
 	}
 
 	private Encoder springEncoder(ObjectProvider<AbstractFormWriter> formWriterProvider,
-			FeignEncoderProperties encoderProperties) {
+			FeignEncoderProperties encoderProperties, ObjectProvider<HttpMessageConverterCustomizer> customizers) {
 		AbstractFormWriter formWriter = formWriterProvider.getIfAvailable();
 
 		if (formWriter != null) {
-			return new SpringEncoder(new SpringPojoFormEncoder(formWriter), this.messageConverters, encoderProperties);
+			return new SpringEncoder(new SpringPojoFormEncoder(formWriter), messageConverters, encoderProperties,
+					customizers);
 		}
 		else {
-			return new SpringEncoder(new SpringFormEncoder(), this.messageConverters, encoderProperties);
+			return new SpringEncoder(new SpringFormEncoder(), messageConverters, encoderProperties, customizers);
 		}
 	}
 
@@ -202,7 +216,7 @@ public class FeignClientsConfiguration {
 
 	@Configuration(proxyBeanMethods = false)
 	@ConditionalOnClass(CircuitBreaker.class)
-	@ConditionalOnProperty("feign.circuitbreaker.enabled")
+	@ConditionalOnProperty("spring.cloud.openfeign.circuitbreaker.enabled")
 	protected static class CircuitBreakerPresentFeignBuilderConfiguration {
 
 		@Bean
@@ -223,16 +237,23 @@ public class FeignClientsConfiguration {
 	}
 
 	@Configuration(proxyBeanMethods = false)
-	@ConditionalOnBean(type = "io.micrometer.core.instrument.MeterRegistry")
-	@ConditionalOnClass(name = "feign.micrometer.MicrometerCapability")
-	@ConditionalOnProperty(name = "feign.metrics.enabled", matchIfMissing = true)
-	@Conditional(FeignClientMetricsEnabledCondition.class)
-	protected static class MetricsConfiguration {
+	@ConditionalOnProperty(name = "spring.cloud.openfeign.micrometer.enabled", matchIfMissing = true)
+	@ConditionalOnClass({ MicrometerObservationCapability.class, MicrometerCapability.class, MeterRegistry.class })
+	@Conditional(FeignClientMicrometerEnabledCondition.class)
+	protected static class MicrometerConfiguration {
 
 		@Bean
 		@ConditionalOnMissingBean
-		public MicrometerCapability micrometerCapability(MeterRegistry meterRegistry) {
-			return new MicrometerCapability(meterRegistry);
+		@ConditionalOnBean(type = "io.micrometer.observation.ObservationRegistry")
+		public MicrometerObservationCapability micrometerObservationCapability(ObservationRegistry registry) {
+			return new MicrometerObservationCapability(registry);
+		}
+
+		@Bean
+		@ConditionalOnBean(type = "io.micrometer.core.instrument.MeterRegistry")
+		@ConditionalOnMissingBean({ MicrometerCapability.class, MicrometerObservationCapability.class })
+		public MicrometerCapability micrometerCapability(MeterRegistry registry) {
+			return new MicrometerCapability(registry);
 		}
 
 	}

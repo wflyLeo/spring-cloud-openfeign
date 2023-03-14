@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2023 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +47,6 @@ import org.springframework.cloud.client.loadbalancer.LoadBalancerLifecycleValida
 import org.springframework.cloud.client.loadbalancer.LoadBalancerProperties;
 import org.springframework.cloud.client.loadbalancer.ResponseData;
 import org.springframework.cloud.client.loadbalancer.RetryableRequestContext;
-import org.springframework.cloud.client.loadbalancer.RetryableStatusCodeException;
 import org.springframework.cloud.loadbalancer.support.LoadBalancerClientFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -57,6 +57,7 @@ import org.springframework.retry.backoff.NoBackOffPolicy;
 import org.springframework.retry.policy.NeverRetryPolicy;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.util.Assert;
+import org.springframework.util.StreamUtils;
 
 import static org.springframework.cloud.openfeign.loadbalancer.LoadBalancerUtils.buildRequestData;
 
@@ -65,12 +66,15 @@ import static org.springframework.cloud.openfeign.loadbalancer.LoadBalancerUtils
  * load-balanced with Spring Cloud LoadBalancer.
  *
  * @author Olga Maciaszek-Sharma
+ * @author changjin wei(魏昌进)
+ * @author Wonsik Cheung
+ * @author Andriy Pikozh
  * @since 2.2.6
  */
 @SuppressWarnings({ "rawtypes", "unchecked" })
 public class RetryableFeignBlockingLoadBalancerClient implements Client {
 
-	private static final Log LOG = LogFactory.getLog(FeignBlockingLoadBalancerClient.class);
+	private static final Log LOG = LogFactory.getLog(RetryableFeignBlockingLoadBalancerClient.class);
 
 	private final Client delegate;
 
@@ -78,18 +82,47 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 
 	private final LoadBalancedRetryFactory loadBalancedRetryFactory;
 
-	private final LoadBalancerProperties properties;
-
 	private final LoadBalancerClientFactory loadBalancerClientFactory;
 
+	private final List<LoadBalancerFeignRequestTransformer> transformers;
+
+	/**
+	 * @deprecated in favour of
+	 * {@link RetryableFeignBlockingLoadBalancerClient#RetryableFeignBlockingLoadBalancerClient(Client, LoadBalancerClient, LoadBalancedRetryFactory, LoadBalancerClientFactory, List)}
+	 */
+	@Deprecated
 	public RetryableFeignBlockingLoadBalancerClient(Client delegate, LoadBalancerClient loadBalancerClient,
 			LoadBalancedRetryFactory loadBalancedRetryFactory, LoadBalancerProperties properties,
 			LoadBalancerClientFactory loadBalancerClientFactory) {
 		this.delegate = delegate;
 		this.loadBalancerClient = loadBalancerClient;
 		this.loadBalancedRetryFactory = loadBalancedRetryFactory;
-		this.properties = properties;
 		this.loadBalancerClientFactory = loadBalancerClientFactory;
+		this.transformers = Collections.emptyList();
+	}
+
+	/**
+	 * @deprecated in favour of
+	 * {@link RetryableFeignBlockingLoadBalancerClient#RetryableFeignBlockingLoadBalancerClient(Client, LoadBalancerClient, LoadBalancedRetryFactory, LoadBalancerClientFactory, List)}
+	 */
+	@Deprecated
+	public RetryableFeignBlockingLoadBalancerClient(Client delegate, LoadBalancerClient loadBalancerClient,
+			LoadBalancedRetryFactory loadBalancedRetryFactory, LoadBalancerClientFactory loadBalancerClientFactory) {
+		this.delegate = delegate;
+		this.loadBalancerClient = loadBalancerClient;
+		this.loadBalancedRetryFactory = loadBalancedRetryFactory;
+		this.loadBalancerClientFactory = loadBalancerClientFactory;
+		this.transformers = Collections.emptyList();
+	}
+
+	public RetryableFeignBlockingLoadBalancerClient(Client delegate, LoadBalancerClient loadBalancerClient,
+			LoadBalancedRetryFactory loadBalancedRetryFactory, LoadBalancerClientFactory loadBalancerClientFactory,
+			List<LoadBalancerFeignRequestTransformer> transformers) {
+		this.delegate = delegate;
+		this.loadBalancerClient = loadBalancerClient;
+		this.loadBalancedRetryFactory = loadBalancedRetryFactory;
+		this.loadBalancerClientFactory = loadBalancerClientFactory;
+		this.transformers = transformers;
 	}
 
 	@Override
@@ -112,10 +145,9 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 					new RetryableRequestContext(null, buildRequestData(request), hint));
 			// On retries the policy will choose the server and set it in the context
 			// and extract the server and update the request being made
-			if (context instanceof LoadBalancedRetryContext) {
-				LoadBalancedRetryContext lbContext = (LoadBalancedRetryContext) context;
-				ServiceInstance serviceInstance = lbContext.getServiceInstance();
-				if (serviceInstance == null) {
+			if (context instanceof LoadBalancedRetryContext lbContext) {
+				retrievedServiceInstance = lbContext.getServiceInstance();
+				if (retrievedServiceInstance == null) {
 					if (LOG.isDebugEnabled()) {
 						LOG.debug("Service instance retrieved from LoadBalancedRetryContext: was null. "
 								+ "Reattempting service instance selection");
@@ -148,11 +180,12 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 					}
 					String reconstructedUrl = loadBalancerClient.reconstructURI(retrievedServiceInstance, originalUri)
 							.toString();
-					feignRequest = buildRequest(request, reconstructedUrl);
+					feignRequest = buildRequest(request, reconstructedUrl, retrievedServiceInstance);
 				}
 			}
 			org.springframework.cloud.client.loadbalancer.Response<ServiceInstance> lbResponse = new DefaultResponse(
 					retrievedServiceInstance);
+			LoadBalancerProperties loadBalancerProperties = loadBalancerClientFactory.getProperties(serviceId);
 			Response response = LoadBalancerUtils.executeWithLoadBalancerLifecycleProcessing(delegate, options,
 					feignRequest, lbRequest, lbResponse, supportedLifecycleProcessors,
 					retrievedServiceInstance != null);
@@ -161,8 +194,11 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 				if (LOG.isDebugEnabled()) {
 					LOG.debug(String.format("Retrying on status code: %d", responseStatus));
 				}
+				byte[] byteArray = response.body() == null ? new byte[] {}
+						: StreamUtils.copyToByteArray(response.body().asInputStream());
 				response.close();
-				throw new RetryableStatusCodeException(serviceId, responseStatus, response, URI.create(request.url()));
+				throw new LoadBalancerResponseStatusCodeException(serviceId, response, byteArray,
+						URI.create(request.url()));
 			}
 			return response;
 		}, new LoadBalancedRecoveryCallback<Response, Response>() {
@@ -178,6 +214,16 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 				request.charset(), request.requestTemplate());
 	}
 
+	protected Request buildRequest(Request request, String reconstructedUrl, ServiceInstance instance) {
+		Request newRequest = buildRequest(request, reconstructedUrl);
+		if (transformers != null) {
+			for (LoadBalancerFeignRequestTransformer transformer : transformers) {
+				newRequest = transformer.transformRequest(newRequest, instance);
+			}
+		}
+		return newRequest;
+	}
+
 	private RetryTemplate buildRetryTemplate(String serviceId, Request request, LoadBalancedRetryPolicy retryPolicy) {
 		RetryTemplate retryTemplate = new RetryTemplate();
 		BackOffPolicy backOffPolicy = this.loadBalancedRetryFactory.createBackOffPolicy(serviceId);
@@ -187,8 +233,10 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 			retryTemplate.setListeners(retryListeners);
 		}
 
-		retryTemplate.setRetryPolicy(retryPolicy == null ? new NeverRetryPolicy()
-				: new InterceptorRetryPolicy(toHttpRequest(request), retryPolicy, loadBalancerClient, serviceId));
+		retryTemplate.setRetryPolicy(
+				!loadBalancerClientFactory.getProperties(serviceId).getRetry().isEnabled() || retryPolicy == null
+						? new NeverRetryPolicy() : new InterceptorRetryPolicy(toHttpRequest(request), retryPolicy,
+								loadBalancerClient, serviceId));
 		return retryTemplate;
 	}
 
@@ -201,12 +249,7 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 		return new HttpRequest() {
 			@Override
 			public HttpMethod getMethod() {
-				return HttpMethod.resolve(request.httpMethod().name());
-			}
-
-			@Override
-			public String getMethodValue() {
-				return getMethod().name();
+				return HttpMethod.valueOf(request.httpMethod().name());
 			}
 
 			@Override
@@ -229,6 +272,7 @@ public class RetryableFeignBlockingLoadBalancerClient implements Client {
 	}
 
 	private String getHint(String serviceId) {
+		LoadBalancerProperties properties = loadBalancerClientFactory.getProperties(serviceId);
 		String defaultHint = properties.getHint().getOrDefault("default", "default");
 		String hintPropertyValue = properties.getHint().get(serviceId);
 		return hintPropertyValue != null ? hintPropertyValue : defaultHint;

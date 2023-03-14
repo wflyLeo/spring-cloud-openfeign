@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import static feign.Util.emptyToNull;
  *
  * @author Jakub Narloch
  * @author Abhijit Sarkar
+ * @author Yanming Zhou
  * @see AnnotatedParameterProcessor
  */
 public class PathVariableParameterProcessor implements AnnotatedParameterProcessor {
@@ -54,14 +55,15 @@ public class PathVariableParameterProcessor implements AnnotatedParameterProcess
 
 		MethodMetadata data = context.getMethodMetadata();
 		String varName = '{' + name + '}';
-		if (!data.template().url().contains(varName) && !searchMapValues(data.template().queries(), varName)
-				&& !searchMapValues(data.template().headers(), varName)) {
+		String varNameRegex = ".*\\{" + name + "(:[^}]+)?\\}.*";
+		if (!data.template().url().matches(varNameRegex) && !containsMapValues(data.template().queries(), varName)
+				&& !containsMapValues(data.template().headers(), varName)) {
 			data.formParams().add(name);
 		}
 		return true;
 	}
 
-	private <K, V> boolean searchMapValues(Map<K, Collection<V>> map, V search) {
+	private <K, V> boolean containsMapValues(Map<K, Collection<V>> map, V search) {
 		Collection<Collection<V>> values = map.values();
 		if (values == null) {
 			return false;

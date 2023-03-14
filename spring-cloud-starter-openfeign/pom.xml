@@ -5,9 +5,12 @@
 	<parent>
 		<groupId>org.springframework.cloud</groupId>
 		<artifactId>spring-cloud-openfeign</artifactId>
-		<version>3.0.3-SNAPSHOT</version>
+		<version>4.0.2-SNAPSHOT</version>
 		<relativePath>..</relativePath>
 	</parent>
+	<scm>
+		<url>https://github.com/spring-cloud/spring-cloud-openfeign</url>
+	</scm>
 	<artifactId>spring-cloud-starter-openfeign</artifactId>
 	<name>Spring Cloud Starter OpenFeign</name>
 	<description>Spring Cloud Starter OpenFeign</description>

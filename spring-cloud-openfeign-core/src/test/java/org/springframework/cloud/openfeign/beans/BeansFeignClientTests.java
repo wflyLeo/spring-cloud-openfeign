@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,7 @@ import java.lang.reflect.Proxy;
 import java.util.Map;
 import java.util.Objects;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -38,9 +37,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,11 +50,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @author Halvdan Hoem Grelland
  * @author Aaron Whiteside
  */
-@RunWith(SpringJUnit4ClassRunner.class)
 @SpringBootTest(classes = BeansFeignClientTests.Application.class, webEnvironment = WebEnvironment.RANDOM_PORT,
-		value = { "spring.application.name=feignclienttest",
-				"logging.level.org.springframework.cloud.openfeign.valid=DEBUG", "feign.httpclient.enabled=false",
-				"feign.okhttp.enabled=false" })
+		value = { "spring.application.name=feignclienttest", "spring.cloud.openfeign.httpclient.hc5.enabled=false",
+				"spring.cloud.openfeign.okhttp.enabled=false" })
 @DirtiesContext
 public class BeansFeignClientTests {
 
@@ -79,13 +74,13 @@ public class BeansFeignClientTests {
 	private TestClient buildByBuilder;
 
 	@Test
-	public void testAnnotations() {
+	void testAnnotations() {
 		Map<String, Object> beans = this.context.getBeansWithAnnotation(FeignClient.class);
 		assertThat(beans.containsKey(TestClient.class.getName())).as("Wrong clients: " + beans).isTrue();
 	}
 
 	@Test
-	public void testClient() {
+	void testClient() {
 		assertThat(this.testClient).as("testClient was null").isNotNull();
 		assertThat(this.extraClient).as("extraClient was null").isNotNull();
 		assertThat(Proxy.isProxyClass(this.testClient.getClass())).as("testClient is not a java Proxy").isTrue();
@@ -94,7 +89,7 @@ public class BeansFeignClientTests {
 	}
 
 	@Test
-	public void extraClient() {
+	void extraClient() {
 		assertThat(this.extraClient).as("extraClient was null").isNotNull();
 		assertThat(Proxy.isProxyClass(this.extraClient.getClass())).as("extraClient is not a java Proxy").isTrue();
 		InvocationHandler invocationHandler = Proxy.getInvocationHandler(this.extraClient);
@@ -102,7 +97,7 @@ public class BeansFeignClientTests {
 	}
 
 	@Test
-	public void buildByBuilder() {
+	void buildByBuilder() {
 		assertThat(this.buildByBuilder).as("buildByBuilder was null").isNotNull();
 		assertThat(Proxy.isProxyClass(this.buildByBuilder.getClass())).as("buildByBuilder is not a java Proxy")
 				.isTrue();
@@ -122,7 +117,7 @@ public class BeansFeignClientTests {
 			return feignClientBuilder.forType(TestClient.class, "builderapp").build();
 		}
 
-		@RequestMapping(method = RequestMethod.GET, value = "/hello")
+		@GetMapping("/hello")
 		public Hello getHello() {
 			return new Hello("hello world 1");
 		}
@@ -133,10 +128,10 @@ public class BeansFeignClientTests {
 
 		private String message;
 
-		public Hello() {
+		Hello() {
 		}
 
-		public Hello(String message) {
+		Hello(String message) {
 			this.message = message;
 		}
 

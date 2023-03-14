@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * @author Jakub Narloch
  */
-@ConfigurationProperties("feign.compression.request")
+@ConfigurationProperties("spring.cloud.openfeign.compression.request")
 public class FeignClientEncodingProperties {
 
 	/**
@@ -40,7 +40,7 @@ public class FeignClientEncodingProperties {
 	private int minRequestSize = 2048;
 
 	public String[] getMimeTypes() {
-		return this.mimeTypes;
+		return mimeTypes;
 	}
 
 	public void setMimeTypes(String[] mimeTypes) {
@@ -48,7 +48,7 @@ public class FeignClientEncodingProperties {
 	}
 
 	public int getMinRequestSize() {
-		return this.minRequestSize;
+		return minRequestSize;
 	}
 
 	public void setMinRequestSize(int minRequestSize) {
@@ -64,20 +64,19 @@ public class FeignClientEncodingProperties {
 			return false;
 		}
 		FeignClientEncodingProperties that = (FeignClientEncodingProperties) o;
-		return Arrays.equals(this.mimeTypes, that.mimeTypes)
-				&& Objects.equals(this.minRequestSize, that.minRequestSize);
+		return Arrays.equals(mimeTypes, that.mimeTypes) && Objects.equals(minRequestSize, that.minRequestSize);
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(this.mimeTypes, this.minRequestSize);
+		return Objects.hash(Arrays.hashCode(mimeTypes), minRequestSize);
 	}
 
 	@Override
 	public String toString() {
 		return new StringBuilder("FeignClientEncodingProperties{").append("mimeTypes=")
-				.append(Arrays.toString(this.mimeTypes)).append(", ").append("minRequestSize=")
-				.append(this.minRequestSize).append("}").toString();
+				.append(Arrays.toString(mimeTypes)).append(", ").append("minRequestSize=").append(minRequestSize)
+				.append("}").toString();
 	}
 
 }

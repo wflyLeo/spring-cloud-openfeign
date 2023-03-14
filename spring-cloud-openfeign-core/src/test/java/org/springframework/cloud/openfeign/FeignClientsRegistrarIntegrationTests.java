@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,27 +49,8 @@ class FeignClientsRegistrarIntegrationTests {
 	}
 
 	@Test
-	void shouldUseQualifierIfQualifiersArrayNotPresent() {
-		assertThat(context.getBean("qualifier4")).isNotNull();
-	}
-
-	@Test
 	void shouldUseDefaultQualifierWhenNonePresent() {
 		assertThat(context.getBean("noQualifiersFeignClient")).isNotNull();
-	}
-
-	@Test
-	void shouldUseQualifierWhenEmptyQualifiers() {
-		assertThat(context.getBean("test1")).isNotNull();
-		assertThatExceptionOfType(NoSuchBeanDefinitionException.class)
-				.isThrownBy(() -> context.getBean("emptyQualifiersFeignClient"));
-	}
-
-	@Test
-	void shouldUseQualifierWhenWhitespaceQualifiers() {
-		assertThat(context.getBean("test2")).isNotNull();
-		assertThatExceptionOfType(NoSuchBeanDefinitionException.class)
-				.isThrownBy(() -> context.getBean("whitespaceQualifiersFeignClient"));
 	}
 
 	@Test
@@ -82,28 +63,13 @@ class FeignClientsRegistrarIntegrationTests {
 		assertThat(context.getBean("whitespaceQualifiersNoQualifierFeignClient")).isNotNull();
 	}
 
-	@FeignClient(name = "qualifiersClient", qualifiers = { "qualifier1", "qualifier2" }, qualifier = "qualifier3")
+	@FeignClient(name = "qualifiersClient", qualifiers = { "qualifier1", "qualifier2" })
 	protected interface QualifiersClient {
-
-	}
-
-	@FeignClient(name = "qualifierClient", qualifier = "qualifier4")
-	protected interface QualifierClient {
 
 	}
 
 	@FeignClient(name = "noQualifiers")
 	protected interface NoQualifiersClient {
-
-	}
-
-	@FeignClient(name = "emptyQualifiers", qualifier = "test1", qualifiers = {})
-	protected interface EmptyQualifiersClient {
-
-	}
-
-	@FeignClient(name = "whitespaceQualifiers", qualifier = "test2", qualifiers = { " " })
-	protected interface WhitespaceQualifiersClient {
 
 	}
 
@@ -120,9 +86,8 @@ class FeignClientsRegistrarIntegrationTests {
 	@Configuration(proxyBeanMethods = false)
 	@EnableAutoConfiguration
 	@Import(NoSecurityConfiguration.class)
-	@EnableFeignClients(clients = { QualifiersClient.class, QualifierClient.class, NoQualifiersClient.class,
-			EmptyQualifiersClient.class, WhitespaceQualifiersClient.class, EmptyQualifiersNoQualifierClient.class,
-			WhitespaceQualifiersNoQualifierClient.class })
+	@EnableFeignClients(clients = { NoQualifiersClient.class, QualifiersClient.class,
+			EmptyQualifiersNoQualifierClient.class, WhitespaceQualifiersNoQualifierClient.class })
 	protected static class QualifiersTestConfig {
 
 	}

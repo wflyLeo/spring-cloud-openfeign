@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,9 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 import feign.RequestTemplate;
@@ -34,6 +37,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import org.springframework.beans.factory.ObjectFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
 import org.springframework.cloud.openfeign.encoding.HttpEncoding;
 import org.springframework.http.HttpHeaders;
@@ -46,8 +50,11 @@ import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.protobuf.ProtobufHttpMessageConverter;
 import org.springframework.web.multipart.MultipartFile;
 
-import static org.springframework.cloud.openfeign.support.FeignUtils.getHeaders;
 import static org.springframework.cloud.openfeign.support.FeignUtils.getHttpHeaders;
+import static org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED;
+import static org.springframework.http.MediaType.MULTIPART_FORM_DATA;
+import static org.springframework.http.MediaType.MULTIPART_MIXED;
+import static org.springframework.http.MediaType.MULTIPART_RELATED;
 
 /**
  * @author Spencer Gibb
@@ -56,6 +63,7 @@ import static org.springframework.cloud.openfeign.support.FeignUtils.getHttpHead
  * @author Aaron Whiteside
  * @author Darren Foong
  * @author Olga Maciaszek-Sharma
+ * @author Can Bezmen
  */
 @SuppressWarnings("rawtypes")
 public class SpringEncoder implements Encoder {
@@ -68,19 +76,18 @@ public class SpringEncoder implements Encoder {
 
 	private final FeignEncoderProperties encoderProperties;
 
-	public SpringEncoder(ObjectFactory<HttpMessageConverters> messageConverters) {
-		this(new SpringFormEncoder(), messageConverters);
-	}
+	private final ObjectProvider<HttpMessageConverterCustomizer> customizers;
 
-	public SpringEncoder(SpringFormEncoder springFormEncoder, ObjectFactory<HttpMessageConverters> messageConverters) {
-		this(springFormEncoder, messageConverters, new FeignEncoderProperties());
+	public SpringEncoder(ObjectFactory<HttpMessageConverters> messageConverters) {
+		this(new SpringFormEncoder(), messageConverters, new FeignEncoderProperties(), new EmptyObjectProvider<>());
 	}
 
 	public SpringEncoder(SpringFormEncoder springFormEncoder, ObjectFactory<HttpMessageConverters> messageConverters,
-			FeignEncoderProperties encoderProperties) {
+			FeignEncoderProperties encoderProperties, ObjectProvider<HttpMessageConverterCustomizer> customizers) {
 		this.springFormEncoder = springFormEncoder;
 		this.messageConverters = messageConverters;
 		this.encoderProperties = encoderProperties;
+		this.customizers = customizers;
 	}
 
 	@Override
@@ -95,8 +102,8 @@ public class SpringEncoder implements Encoder {
 				requestContentType = MediaType.valueOf(type);
 			}
 
-			if (isMultipartType(requestContentType)) {
-				this.springFormEncoder.encode(requestBody, bodyType, request);
+			if (isFormRelatedContentType(requestContentType)) {
+				springFormEncoder.encode(requestBody, bodyType, request);
 				return;
 			}
 			else {
@@ -111,7 +118,9 @@ public class SpringEncoder implements Encoder {
 
 	private void encodeWithMessageConverter(Object requestBody, Type bodyType, RequestTemplate request,
 			MediaType requestContentType) {
-		for (HttpMessageConverter messageConverter : this.messageConverters.getObject().getConverters()) {
+		List<HttpMessageConverter<?>> converters = messageConverters.getObject().getConverters();
+		customizers.forEach(customizer -> customizer.accept(converters));
+		for (HttpMessageConverter messageConverter : converters) {
 			FeignOutputMessage outputMessage;
 			try {
 				if (messageConverter instanceof GenericHttpMessageConverter) {
@@ -130,7 +139,7 @@ public class SpringEncoder implements Encoder {
 				request.headers(null);
 				// converters can modify headers, so update the request
 				// with the modified headers
-				request.headers(getHeaders(outputMessage.getHeaders()));
+				request.headers(new LinkedHashMap<>(outputMessage.getHeaders()));
 
 				// do not use charset for binary data and protobuf
 				Charset charset;
@@ -207,12 +216,19 @@ public class SpringEncoder implements Encoder {
 		}
 	}
 
-	private boolean isMultipartType(MediaType requestContentType) {
-		return Arrays.asList(MediaType.MULTIPART_FORM_DATA, MediaType.MULTIPART_MIXED, MediaType.MULTIPART_RELATED)
-				.contains(requestContentType);
+	private boolean isFormRelatedContentType(MediaType requestContentType) {
+		return isMultipartType(requestContentType) || isFormUrlEncoded(requestContentType);
 	}
 
-	private boolean binaryContentType(FeignOutputMessage outputMessage) {
+	private boolean isMultipartType(MediaType requestContentType) {
+		return Arrays.asList(MULTIPART_FORM_DATA, MULTIPART_MIXED, MULTIPART_RELATED).contains(requestContentType);
+	}
+
+	private boolean isFormUrlEncoded(MediaType requestContentType) {
+		return Objects.equals(APPLICATION_FORM_URLENCODED, requestContentType);
+	}
+
+	protected boolean binaryContentType(FeignOutputMessage outputMessage) {
 		MediaType contentType = outputMessage.getHeaders().getContentType();
 		return contentType == null || Stream
 				.of(MediaType.APPLICATION_CBOR, MediaType.APPLICATION_OCTET_STREAM, MediaType.APPLICATION_PDF,
@@ -220,28 +236,28 @@ public class SpringEncoder implements Encoder {
 				.anyMatch(mediaType -> mediaType.includes(contentType));
 	}
 
-	private final class FeignOutputMessage implements HttpOutputMessage {
+	protected final class FeignOutputMessage implements HttpOutputMessage {
 
 		private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
 		private final HttpHeaders httpHeaders;
 
 		private FeignOutputMessage(RequestTemplate request) {
-			this.httpHeaders = getHttpHeaders(request.headers());
+			httpHeaders = getHttpHeaders(request.headers());
 		}
 
 		@Override
-		public OutputStream getBody() throws IOException {
-			return this.outputStream;
+		public OutputStream getBody() {
+			return outputStream;
 		}
 
 		@Override
 		public HttpHeaders getHeaders() {
-			return this.httpHeaders;
+			return httpHeaders;
 		}
 
 		public ByteArrayOutputStream getOutputStream() {
-			return this.outputStream;
+			return outputStream;
 		}
 
 	}

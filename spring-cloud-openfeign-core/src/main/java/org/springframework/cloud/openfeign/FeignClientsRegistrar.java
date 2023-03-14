@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,7 +71,7 @@ import org.springframework.util.StringUtils;
 class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLoaderAware, EnvironmentAware {
 
 	// patterned after Spring Integration IntegrationComponentScanRegistrar
-	// and RibbonClientsConfigurationRegistgrar
+	// and RibbonClientsConfigurationRegistrar
 
 	private ResourceLoader resourceLoader;
 
@@ -106,7 +106,7 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 			host = new URI(url).getHost();
 
 		}
-		catch (URISyntaxException e) {
+		catch (URISyntaxException ignored) {
 		}
 		Assert.state(host != null, "Service id not legal hostname (" + name + ")");
 		return name;
@@ -162,12 +162,11 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 			else {
 				name = "default." + metadata.getClassName();
 			}
-			registerClientConfiguration(registry, name, defaultAttrs.get("defaultConfiguration"));
+			registerClientConfiguration(registry, name, "default", defaultAttrs.get("defaultConfiguration"));
 		}
 	}
 
 	public void registerFeignClients(AnnotationMetadata metadata, BeanDefinitionRegistry registry) {
-
 		LinkedHashSet<BeanDefinition> candidateComponents = new LinkedHashSet<>();
 		Map<String, Object> attrs = metadata.getAnnotationAttributes(EnableFeignClients.class.getName());
 		final Class<?>[] clients = attrs == null ? null : (Class<?>[]) attrs.get("clients");
@@ -187,9 +186,8 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 		}
 
 		for (BeanDefinition candidateComponent : candidateComponents) {
-			if (candidateComponent instanceof AnnotatedBeanDefinition) {
+			if (candidateComponent instanceof AnnotatedBeanDefinition beanDefinition) {
 				// verify annotated class is an interface
-				AnnotatedBeanDefinition beanDefinition = (AnnotatedBeanDefinition) candidateComponent;
 				AnnotationMetadata annotationMetadata = beanDefinition.getMetadata();
 				Assert.isTrue(annotationMetadata.isInterface(), "@FeignClient can only be specified on an interface");
 
@@ -197,7 +195,8 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 						.getAnnotationAttributes(FeignClient.class.getCanonicalName());
 
 				String name = getClientName(attributes);
-				registerClientConfiguration(registry, name, attributes.get("configuration"));
+				String className = annotationMetadata.getClassName();
+				registerClientConfiguration(registry, name, className, attributes.get("configuration"));
 
 				registerFeignClient(registry, annotationMetadata, attributes);
 			}
@@ -207,9 +206,63 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 	private void registerFeignClient(BeanDefinitionRegistry registry, AnnotationMetadata annotationMetadata,
 			Map<String, Object> attributes) {
 		String className = annotationMetadata.getClassName();
-		Class clazz = ClassUtils.resolveClassName(className, null);
+		if (String.valueOf(false).equals(
+				environment.getProperty("spring.cloud.openfeign.lazy-attributes-resolution", String.valueOf(false)))) {
+			eagerlyRegisterFeignClientBeanDefinition(className, attributes, registry);
+		}
+		else {
+			lazilyRegisterFeignClientBeanDefinition(className, attributes, registry);
+		}
+	}
+
+	private void eagerlyRegisterFeignClientBeanDefinition(String className, Map<String, Object> attributes,
+			BeanDefinitionRegistry registry) {
+		validate(attributes);
+		BeanDefinitionBuilder definition = BeanDefinitionBuilder.genericBeanDefinition(FeignClientFactoryBean.class);
+		definition.addPropertyValue("url", getUrl(null, attributes));
+		definition.addPropertyValue("path", getPath(null, attributes));
+		String name = getName(attributes);
+		definition.addPropertyValue("name", name);
+		String contextId = getContextId(null, attributes);
+		definition.addPropertyValue("contextId", contextId);
+		definition.addPropertyValue("type", className);
+		definition.addPropertyValue("dismiss404", Boolean.parseBoolean(String.valueOf(attributes.get("dismiss404"))));
+		Object fallback = attributes.get("fallback");
+		if (fallback != null) {
+			definition.addPropertyValue("fallback",
+					(fallback instanceof Class ? fallback : ClassUtils.resolveClassName(fallback.toString(), null)));
+		}
+		Object fallbackFactory = attributes.get("fallbackFactory");
+		if (fallbackFactory != null) {
+			definition.addPropertyValue("fallbackFactory", fallbackFactory instanceof Class ? fallbackFactory
+					: ClassUtils.resolveClassName(fallbackFactory.toString(), null));
+		}
+		definition.addPropertyValue("fallbackFactory", attributes.get("fallbackFactory"));
+		definition.setAutowireMode(AbstractBeanDefinition.AUTOWIRE_BY_TYPE);
+		definition.addPropertyValue("refreshableClient", isClientRefreshEnabled());
+		String[] qualifiers = getQualifiers(attributes);
+		if (ObjectUtils.isEmpty(qualifiers)) {
+			qualifiers = new String[] { contextId + "FeignClient" };
+		}
+		// This is done so that there's a way to retrieve qualifiers while generating AOT
+		// code
+		definition.addPropertyValue("qualifiers", qualifiers);
+		AbstractBeanDefinition beanDefinition = definition.getBeanDefinition();
+		beanDefinition.setAttribute(FactoryBean.OBJECT_TYPE_ATTRIBUTE, className);
+		// has a default, won't be null
+		boolean primary = (Boolean) attributes.get("primary");
+		beanDefinition.setPrimary(primary);
+		BeanDefinitionHolder holder = new BeanDefinitionHolder(beanDefinition, className, qualifiers);
+		BeanDefinitionReaderUtils.registerBeanDefinition(holder, registry);
+		registerRefreshableBeanDefinition(registry, contextId, Request.Options.class, OptionsFactoryBean.class);
+		registerRefreshableBeanDefinition(registry, contextId, RefreshableUrl.class, RefreshableUrlFactoryBean.class);
+	}
+
+	private void lazilyRegisterFeignClientBeanDefinition(String className, Map<String, Object> attributes,
+			BeanDefinitionRegistry registry) {
 		ConfigurableBeanFactory beanFactory = registry instanceof ConfigurableBeanFactory
 				? (ConfigurableBeanFactory) registry : null;
+		Class clazz = ClassUtils.resolveClassName(className, null);
 		String contextId = getContextId(beanFactory, attributes);
 		String name = getName(attributes);
 		FeignClientFactoryBean factoryBean = new FeignClientFactoryBean();
@@ -221,7 +274,7 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 		BeanDefinitionBuilder definition = BeanDefinitionBuilder.genericBeanDefinition(clazz, () -> {
 			factoryBean.setUrl(getUrl(beanFactory, attributes));
 			factoryBean.setPath(getPath(beanFactory, attributes));
-			factoryBean.setDecode404(Boolean.parseBoolean(String.valueOf(attributes.get("decode404"))));
+			factoryBean.setDismiss404(Boolean.parseBoolean(String.valueOf(attributes.get("dismiss404"))));
 			Object fallback = attributes.get("fallback");
 			if (fallback != null) {
 				factoryBean.setFallback(fallback instanceof Class ? (Class<?>) fallback
@@ -255,7 +308,8 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 		BeanDefinitionHolder holder = new BeanDefinitionHolder(beanDefinition, className, qualifiers);
 		BeanDefinitionReaderUtils.registerBeanDefinition(holder, registry);
 
-		registerOptionsBeanDefinition(registry, contextId);
+		registerRefreshableBeanDefinition(registry, contextId, Request.Options.class, OptionsFactoryBean.class);
+		registerRefreshableBeanDefinition(registry, contextId, RefreshableUrl.class, RefreshableUrlFactoryBean.class);
 	}
 
 	private void validate(Map<String, Object> attributes) {
@@ -302,7 +356,11 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 			if (resolver == null) {
 				return resolved;
 			}
-			return String.valueOf(resolver.evaluate(resolved, new BeanExpressionContext(beanFactory, null)));
+			Object evaluateValue = resolver.evaluate(resolved, new BeanExpressionContext(beanFactory, null));
+			if (evaluateValue != null) {
+				return String.valueOf(evaluateValue);
+			}
+			return null;
 		}
 		return value;
 	}
@@ -402,9 +460,11 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 				"Either 'name' or 'value' must be provided in @" + FeignClient.class.getSimpleName());
 	}
 
-	private void registerClientConfiguration(BeanDefinitionRegistry registry, Object name, Object configuration) {
+	private void registerClientConfiguration(BeanDefinitionRegistry registry, Object name, Object className,
+			Object configuration) {
 		BeanDefinitionBuilder builder = BeanDefinitionBuilder.genericBeanDefinition(FeignClientSpecification.class);
 		builder.addConstructorArgValue(name);
+		builder.addConstructorArgValue(className);
 		builder.addConstructorArgValue(configuration);
 		registry.registerBeanDefinition(name + "." + FeignClientSpecification.class.getSimpleName(),
 				builder.getBeanDefinition());
@@ -416,16 +476,17 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 	}
 
 	/**
-	 * This method is meant to create {@link Request.Options} beans definition with
-	 * refreshScope.
+	 * This method registers beans definition with refreshScope.
 	 * @param registry spring bean definition registry
 	 * @param contextId name of feign client
+	 * @param beanType type of bean
+	 * @param factoryBeanType points to a relevant bean factory
 	 */
-	private void registerOptionsBeanDefinition(BeanDefinitionRegistry registry, String contextId) {
+	private void registerRefreshableBeanDefinition(BeanDefinitionRegistry registry, String contextId, Class<?> beanType,
+			Class<?> factoryBeanType) {
 		if (isClientRefreshEnabled()) {
-			String beanName = Request.Options.class.getCanonicalName() + "-" + contextId;
-			BeanDefinitionBuilder definitionBuilder = BeanDefinitionBuilder
-					.genericBeanDefinition(OptionsFactoryBean.class);
+			String beanName = beanType.getCanonicalName() + "-" + contextId;
+			BeanDefinitionBuilder definitionBuilder = BeanDefinitionBuilder.genericBeanDefinition(factoryBeanType);
 			definitionBuilder.setScope("refresh");
 			definitionBuilder.addPropertyValue("contextId", contextId);
 			BeanDefinitionHolder definitionHolder = new BeanDefinitionHolder(definitionBuilder.getBeanDefinition(),
@@ -436,7 +497,7 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLo
 	}
 
 	private boolean isClientRefreshEnabled() {
-		return environment.getProperty("feign.client.refresh-enabled", Boolean.class, false);
+		return environment.getProperty("spring.cloud.openfeign.client.refresh-enabled", Boolean.class, false);
 	}
 
 }

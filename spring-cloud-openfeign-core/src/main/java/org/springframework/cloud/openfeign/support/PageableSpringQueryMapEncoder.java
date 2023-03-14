@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,29 +31,55 @@ import org.springframework.data.domain.Sort;
  * {@link org.springframework.cloud.openfeign.SpringQueryMap}.
  *
  * @author Hyeonmin Park
+ * @author Yanming Zhou
  * @since 2.2.8
  */
 public class PageableSpringQueryMapEncoder extends BeanQueryMapEncoder {
+
+	/**
+	 * Page index parameter name.
+	 */
+	private String pageParameter = "page";
+
+	/**
+	 * Page size parameter name.
+	 */
+	private String sizeParameter = "size";
+
+	/**
+	 * Sort parameter name.
+	 */
+	private String sortParameter = "sort";
+
+	public void setPageParameter(String pageParameter) {
+		this.pageParameter = pageParameter;
+	}
+
+	public void setSizeParameter(String sizeParameter) {
+		this.sizeParameter = sizeParameter;
+	}
+
+	public void setSortParameter(String sortParameter) {
+		this.sortParameter = sortParameter;
+	}
 
 	@Override
 	public Map<String, Object> encode(Object object) {
 		if (supports(object)) {
 			Map<String, Object> queryMap = new HashMap<>();
 
-			if (object instanceof Pageable) {
-				Pageable pageable = (Pageable) object;
+			if (object instanceof Pageable pageable) {
 
 				if (pageable.isPaged()) {
-					queryMap.put("page", pageable.getPageNumber());
-					queryMap.put("size", pageable.getPageSize());
+					queryMap.put(pageParameter, pageable.getPageNumber());
+					queryMap.put(sizeParameter, pageable.getPageSize());
 				}
 
 				if (pageable.getSort() != null) {
 					applySort(queryMap, pageable.getSort());
 				}
 			}
-			else if (object instanceof Sort) {
-				Sort sort = (Sort) object;
+			else if (object instanceof Sort sort) {
 				applySort(queryMap, sort);
 			}
 			return queryMap;
@@ -69,7 +95,7 @@ public class PageableSpringQueryMapEncoder extends BeanQueryMapEncoder {
 			sortQueries.add(order.getProperty() + "%2C" + order.getDirection());
 		}
 		if (!sortQueries.isEmpty()) {
-			queryMap.put("sort", sortQueries);
+			queryMap.put(sortParameter, sortQueries);
 		}
 	}
 

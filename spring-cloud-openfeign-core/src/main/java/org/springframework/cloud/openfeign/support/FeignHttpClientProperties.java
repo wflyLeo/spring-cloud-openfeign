@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2021 the original author or authors.
+ * Copyright 2013-2023 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,22 @@
 
 package org.springframework.cloud.openfeign.support;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+
+import feign.okhttp.OkHttpClient;
+import okhttp3.Protocol;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * @author Ryan Baxter
  * @author Nguyen Ky Thanh
+ * @author Olga Maciaszek-Sharma
+ * @author changjin wei(魏昌进)
  */
-@ConfigurationProperties(prefix = "feign.httpclient")
+@ConfigurationProperties(prefix = "spring.cloud.openfeign.httpclient")
 public class FeignHttpClientProperties {
 
 	/**
@@ -88,8 +95,13 @@ public class FeignHttpClientProperties {
 	 */
 	private Hc5Properties hc5 = new Hc5Properties();
 
+	/**
+	 * Additional {@link OkHttpClient}-specific properties.
+	 */
+	private OkHttp okHttp = new OkHttp();
+
 	public int getConnectionTimerRepeat() {
-		return this.connectionTimerRepeat;
+		return connectionTimerRepeat;
 	}
 
 	public void setConnectionTimerRepeat(int connectionTimerRepeat) {
@@ -97,7 +109,7 @@ public class FeignHttpClientProperties {
 	}
 
 	public boolean isDisableSslValidation() {
-		return this.disableSslValidation;
+		return disableSslValidation;
 	}
 
 	public void setDisableSslValidation(boolean disableSslValidation) {
@@ -105,7 +117,7 @@ public class FeignHttpClientProperties {
 	}
 
 	public int getMaxConnections() {
-		return this.maxConnections;
+		return maxConnections;
 	}
 
 	public void setMaxConnections(int maxConnections) {
@@ -113,7 +125,7 @@ public class FeignHttpClientProperties {
 	}
 
 	public int getMaxConnectionsPerRoute() {
-		return this.maxConnectionsPerRoute;
+		return maxConnectionsPerRoute;
 	}
 
 	public void setMaxConnectionsPerRoute(int maxConnectionsPerRoute) {
@@ -121,7 +133,7 @@ public class FeignHttpClientProperties {
 	}
 
 	public long getTimeToLive() {
-		return this.timeToLive;
+		return timeToLive;
 	}
 
 	public void setTimeToLive(long timeToLive) {
@@ -129,7 +141,7 @@ public class FeignHttpClientProperties {
 	}
 
 	public TimeUnit getTimeToLiveUnit() {
-		return this.timeToLiveUnit;
+		return timeToLiveUnit;
 	}
 
 	public void setTimeToLiveUnit(TimeUnit timeToLiveUnit) {
@@ -137,7 +149,7 @@ public class FeignHttpClientProperties {
 	}
 
 	public boolean isFollowRedirects() {
-		return this.followRedirects;
+		return followRedirects;
 	}
 
 	public void setFollowRedirects(boolean followRedirects) {
@@ -145,7 +157,7 @@ public class FeignHttpClientProperties {
 	}
 
 	public int getConnectionTimeout() {
-		return this.connectionTimeout;
+		return connectionTimeout;
 	}
 
 	public void setConnectionTimeout(int connectionTimeout) {
@@ -158,6 +170,14 @@ public class FeignHttpClientProperties {
 
 	public void setHc5(Hc5Properties hc5) {
 		this.hc5 = hc5;
+	}
+
+	public OkHttp getOkHttp() {
+		return okHttp;
+	}
+
+	public void setOkHttp(OkHttp okHttp) {
+		this.okHttp = okHttp;
 	}
 
 	public static class Hc5Properties {
@@ -183,6 +203,16 @@ public class FeignHttpClientProperties {
 		public static final TimeUnit DEFAULT_SOCKET_TIMEOUT_UNIT = TimeUnit.SECONDS;
 
 		/**
+		 * Default value for connection request timeout.
+		 */
+		public static final int DEFAULT_CONNECTION_REQUEST_TIMEOUT = 3;
+
+		/**
+		 * Default value for connection request timeout unit.
+		 */
+		public static final TimeUnit DEFAULT_CONNECTION_REQUEST_TIMEOUT_UNIT = TimeUnit.MINUTES;
+
+		/**
 		 * Pool concurrency policies.
 		 */
 		private PoolConcurrencyPolicy poolConcurrencyPolicy = DEFAULT_POOL_CONCURRENCY_POLICY;
@@ -202,8 +232,18 @@ public class FeignHttpClientProperties {
 		 */
 		private TimeUnit socketTimeoutUnit = DEFAULT_SOCKET_TIMEOUT_UNIT;
 
+		/**
+		 * Default value for connection request timeout.
+		 */
+		private int connectionRequestTimeout = DEFAULT_CONNECTION_REQUEST_TIMEOUT;
+
+		/**
+		 * Default value for connection request timeout unit.
+		 */
+		private TimeUnit connectionRequestTimeoutUnit = DEFAULT_CONNECTION_REQUEST_TIMEOUT_UNIT;
+
 		public PoolConcurrencyPolicy getPoolConcurrencyPolicy() {
-			return this.poolConcurrencyPolicy;
+			return poolConcurrencyPolicy;
 		}
 
 		public void setPoolConcurrencyPolicy(PoolConcurrencyPolicy poolConcurrencyPolicy) {
@@ -232,6 +272,22 @@ public class FeignHttpClientProperties {
 
 		public void setSocketTimeout(int socketTimeout) {
 			this.socketTimeout = socketTimeout;
+		}
+
+		public int getConnectionRequestTimeout() {
+			return connectionRequestTimeout;
+		}
+
+		public void setConnectionRequestTimeout(int connectionRequestTimeout) {
+			this.connectionRequestTimeout = connectionRequestTimeout;
+		}
+
+		public TimeUnit getConnectionRequestTimeoutUnit() {
+			return connectionRequestTimeoutUnit;
+		}
+
+		public void setConnectionRequestTimeoutUnit(TimeUnit connectionRequestTimeoutUnit) {
+			this.connectionRequestTimeoutUnit = connectionRequestTimeoutUnit;
 		}
 
 		/**
@@ -268,6 +324,40 @@ public class FeignHttpClientProperties {
 			 */
 			FIFO
 
+		}
+
+	}
+
+	/**
+	 * {@link OkHttpClient}-specific properties.
+	 */
+	public static class OkHttp {
+
+		/**
+		 * {@link OkHttpClient} read timeout; defaults to 60 seconds.
+		 */
+		private Duration readTimeout = Duration.ofSeconds(60);
+
+		/**
+		 * Configure the protocols used by this client to communicate with remote servers.
+		 * Uses {@link String} values of {@link Protocol}.
+		 */
+		private List<String> protocols = List.of("HTTP_2", "HTTP_1_1");
+
+		public Duration getReadTimeout() {
+			return readTimeout;
+		}
+
+		public void setReadTimeout(Duration readTimeout) {
+			this.readTimeout = readTimeout;
+		}
+
+		public List<String> getProtocols() {
+			return protocols;
+		}
+
+		public void setProtocols(List<String> protocols) {
+			this.protocols = protocols;
 		}
 
 	}

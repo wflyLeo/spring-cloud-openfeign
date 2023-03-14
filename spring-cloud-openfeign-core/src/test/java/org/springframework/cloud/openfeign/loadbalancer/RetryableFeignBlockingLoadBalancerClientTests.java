@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2023 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,17 @@
 
 package org.springframework.cloud.openfeign.loadbalancer;
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import feign.Client;
 import feign.Request;
 import feign.Response;
+import org.apache.commons.io.IOUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +57,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -65,30 +72,37 @@ import static org.mockito.Mockito.when;
  * Commons project, so here we are only testing the interactions between
  * {@link RetryableFeignBlockingLoadBalancerClient} and its delegates.
  *
- * @see <a href=
- * "https://github.com/spring-cloud/spring-cloud-commons/blob/master/spring-cloud-loadbalancer/src/test/java/org/springframework/cloud/loadbalancer/blocking/client/BlockingLoadBalancerClientTests.java">BlockingLoadBalancerClientTests</a>
  * @author Olga Maciaszek-Sharma
+ * @author changjin wei(魏昌进)
+ * @author Wonsik Cheung
+ * @author Andriy Pikozh
+ * @see <a href=
+ * "https://github.com/spring-cloud/spring-cloud-commons/blob/main/spring-cloud-loadbalancer/src/test/java/org/springframework/cloud/loadbalancer/blocking/client/BlockingLoadBalancerClientTests.java">BlockingLoadBalancerClientTests</a>
  */
 @ExtendWith(MockitoExtension.class)
 class RetryableFeignBlockingLoadBalancerClientTests {
 
-	private Client delegate = mock(Client.class);
+	private final Client delegate = mock(Client.class);
 
-	private LoadBalancedRetryFactory retryFactory = mock(LoadBalancedRetryFactory.class);
+	private final LoadBalancedRetryFactory retryFactory = mock(LoadBalancedRetryFactory.class);
 
-	private BlockingLoadBalancerClient loadBalancerClient = mock(BlockingLoadBalancerClient.class);
+	private final BlockingLoadBalancerClient loadBalancerClient = mock(BlockingLoadBalancerClient.class);
 
 	private final LoadBalancerClientFactory loadBalancerClientFactory = mock(LoadBalancerClientFactory.class);
 
-	private LoadBalancerProperties properties = new LoadBalancerProperties();
+	private final LoadBalancerProperties properties = new LoadBalancerProperties();
 
-	private RetryableFeignBlockingLoadBalancerClient feignBlockingLoadBalancerClient = new RetryableFeignBlockingLoadBalancerClient(
-			delegate, loadBalancerClient, retryFactory, properties, loadBalancerClientFactory);
+	private final List<LoadBalancerFeignRequestTransformer> transformers = Arrays.asList(new InstanceIdTransformer(),
+			new ServiceIdTransformer());
 
-	private ServiceInstance serviceInstance = new DefaultServiceInstance("test-a", "test", "testhost", 80, false);
+	private final RetryableFeignBlockingLoadBalancerClient feignBlockingLoadBalancerClient = new RetryableFeignBlockingLoadBalancerClient(
+			delegate, loadBalancerClient, retryFactory, loadBalancerClientFactory, transformers);
+
+	private final ServiceInstance serviceInstance = new DefaultServiceInstance("test-a", "test", "testhost", 80, false);
 
 	@BeforeEach
 	void setUp() {
+		when(loadBalancerClientFactory.getProperties(any(String.class))).thenReturn(properties);
 		when(retryFactory.createRetryPolicy(any(), eq(loadBalancerClient)))
 				.thenReturn(new BlockingLoadBalancedRetryPolicy(properties));
 		when(loadBalancerClient.choose(eq("test"), any())).thenReturn(serviceInstance);
@@ -115,6 +129,13 @@ class RetryableFeignBlockingLoadBalancerClientTests {
 
 	private Response testResponse(int status) {
 		return Response.builder().request(testRequest()).status(status).build();
+	}
+
+	private Response testResponse(int status, String body) {
+		// ByteArrayInputStream ignores close() and must be wrapped
+		InputStream reallyCloseable = new BufferedInputStream(
+				new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+		return Response.builder().request(testRequest()).status(status).body(reallyCloseable, null).build();
 	}
 
 	@Test
@@ -144,8 +165,79 @@ class RetryableFeignBlockingLoadBalancerClientTests {
 
 		feignBlockingLoadBalancerClient.execute(request, new Request.Options());
 
+		verify(loadBalancerClient, times(2)).choose(eq("test"), any());
 		verify(loadBalancerClient, times(2)).reconstructURI(serviceInstance, URI.create("http://test/path"));
 		verify(delegate, times(2)).execute(any(), any());
+	}
+
+	@Test
+	void shouldReuseServerInstanceOnSameInstanceRetry() throws IOException {
+		properties.getRetry().setMaxRetriesOnSameServiceInstance(1);
+		properties.getRetry().setMaxRetriesOnNextServiceInstance(0);
+		properties.getRetry().getRetryableStatusCodes().add(503);
+		Request request = testRequest();
+		Response response = testResponse(503);
+		when(delegate.execute(any(), any())).thenReturn(response);
+		when(retryFactory.createRetryPolicy(any(), eq(loadBalancerClient)))
+				.thenReturn(new BlockingLoadBalancedRetryPolicy(properties));
+		when(loadBalancerClient.reconstructURI(serviceInstance, URI.create("http://test/path")))
+				.thenReturn(URI.create("http://testhost:80/path"));
+
+		feignBlockingLoadBalancerClient.execute(request, new Request.Options());
+
+		verify(loadBalancerClient, times(1)).choose(eq("test"), any());
+		verify(loadBalancerClient, times(2)).reconstructURI(serviceInstance, URI.create("http://test/path"));
+		verify(delegate, times(2)).execute(any(), any());
+	}
+
+	@Test
+	void shouldReuseServerInstanceOnSameInstanceRetryWithBothSameAndNextRetries() throws IOException {
+		properties.getRetry().setMaxRetriesOnSameServiceInstance(1);
+		properties.getRetry().setMaxRetriesOnNextServiceInstance(1);
+		properties.getRetry().getRetryableStatusCodes().add(503);
+		Request request = testRequest();
+		Response response = testResponse(503);
+		when(delegate.execute(any(), any())).thenReturn(response);
+		when(retryFactory.createRetryPolicy(any(), eq(loadBalancerClient)))
+				.thenReturn(new BlockingLoadBalancedRetryPolicy(properties));
+		when(loadBalancerClient.reconstructURI(serviceInstance, URI.create("http://test/path")))
+				.thenReturn(URI.create("http://testhost:80/path"));
+
+		feignBlockingLoadBalancerClient.execute(request, new Request.Options());
+
+		verify(loadBalancerClient, times(2)).choose(eq("test"), any());
+		verify(loadBalancerClient, times(4)).reconstructURI(serviceInstance, URI.create("http://test/path"));
+		verify(delegate, times(4)).execute(any(), any());
+	}
+
+	@Test
+	void shouldNotRetryOnDisabled() throws IOException {
+		properties.getRetry().setEnabled(false);
+		Request request = testRequest();
+		when(delegate.execute(any(), any())).thenThrow(new IOException());
+		when(retryFactory.createRetryPolicy(any(), eq(loadBalancerClient)))
+				.thenReturn(new BlockingLoadBalancedRetryPolicy(properties));
+
+		assertThatThrownBy(() -> feignBlockingLoadBalancerClient.execute(request, new Request.Options()))
+				.isInstanceOf(IOException.class);
+
+		verify(delegate, times(1)).execute(any(), any());
+	}
+
+	@Test
+	void shouldExposeResponseBodyOnRetry() throws IOException {
+		properties.getRetry().getRetryableStatusCodes().add(503);
+		Request request = testRequest();
+		when(delegate.execute(any(), any())).thenReturn(testResponse(503, "foo"), testResponse(503, "foo"));
+		when(retryFactory.createRetryPolicy(any(), eq(loadBalancerClient)))
+				.thenReturn(new BlockingLoadBalancedRetryPolicy(properties));
+		when(loadBalancerClient.reconstructURI(serviceInstance, URI.create("http://test/path")))
+				.thenReturn(URI.create("http://testhost:80/path"));
+
+		Response response = feignBlockingLoadBalancerClient.execute(request, new Request.Options());
+
+		String bodyContent = IOUtils.toString(response.body().asReader(StandardCharsets.UTF_8));
+		assertThat(bodyContent).isEqualTo("foo");
 	}
 
 	@Test
@@ -169,9 +261,11 @@ class RetryableFeignBlockingLoadBalancerClientTests {
 		Request actualRequest = captor.getValue();
 		assertThat(actualRequest.httpMethod()).isEqualTo(Request.HttpMethod.GET);
 		assertThat(actualRequest.url()).isEqualTo(url);
-		assertThat(actualRequest.headers()).hasSize(1);
+		assertThat(actualRequest.headers()).hasSize(3);
 		assertThat(actualRequest.headers()).containsEntry(HttpHeaders.CONTENT_TYPE,
 				Collections.singletonList(MediaType.APPLICATION_JSON_VALUE));
+		assertThat(actualRequest.headers()).containsEntry("X-ServiceId", Collections.singletonList("test"));
+		assertThat(actualRequest.headers()).containsEntry("X-InstanceId", Collections.singletonList("test-1"));
 		assertThat(new String(actualRequest.body())).isEqualTo("hello");
 	}
 
@@ -278,6 +372,30 @@ class RetryableFeignBlockingLoadBalancerClientTests {
 		@Override
 		protected String getName() {
 			return this.getClass().getSimpleName();
+		}
+
+	}
+
+	private static class InstanceIdTransformer implements LoadBalancerFeignRequestTransformer {
+
+		@Override
+		public Request transformRequest(Request request, ServiceInstance instance) {
+			Map<String, Collection<String>> headers = new HashMap<>(request.headers());
+			headers.put("X-InstanceId", Collections.singletonList(instance.getInstanceId()));
+			return Request.create(request.httpMethod(), request.url(), headers, request.body(), request.charset(),
+					request.requestTemplate());
+		}
+
+	}
+
+	private static class ServiceIdTransformer implements LoadBalancerFeignRequestTransformer {
+
+		@Override
+		public Request transformRequest(Request request, ServiceInstance instance) {
+			Map<String, Collection<String>> headers = new HashMap<>(request.headers());
+			headers.put("X-ServiceId", Collections.singletonList(instance.getServiceId()));
+			return Request.create(request.httpMethod(), request.url(), headers, request.body(), request.charset(),
+					request.requestTemplate());
 		}
 
 	}

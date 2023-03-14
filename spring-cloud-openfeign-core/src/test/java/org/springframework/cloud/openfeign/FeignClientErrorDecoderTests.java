@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2020 the original author or authors.
+ * Copyright 2020-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,8 +37,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.GetMapping;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,7 +50,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class FeignClientErrorDecoderTests {
 
 	@Autowired
-	private FeignContext context;
+	private FeignClientFactory context;
 
 	@Autowired
 	private FooClient foo;
@@ -133,7 +132,7 @@ public class FeignClientErrorDecoderTests {
 	@FeignClient(name = "bar", url = "http://bar", configuration = BarConfiguration.class)
 	interface BarClient {
 
-		@RequestMapping(value = "/", method = RequestMethod.GET)
+		@GetMapping("/")
 		String get();
 
 	}

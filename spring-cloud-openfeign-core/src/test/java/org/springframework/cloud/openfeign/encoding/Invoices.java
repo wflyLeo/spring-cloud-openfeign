@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2020 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,13 @@ import org.springframework.cloud.openfeign.encoding.app.domain.Invoice;
  * Utility class used for testing.
  *
  * @author Jakub Narloch
+ * @author Olga Maciaszek-Sharma
  */
 final class Invoices {
+
+	private Invoices() {
+		throw new IllegalStateException("Can't instantiate a utility class");
+	}
 
 	public static List<Invoice> createInvoiceList(int count) {
 		final List<Invoice> invoices = new ArrayList<>();

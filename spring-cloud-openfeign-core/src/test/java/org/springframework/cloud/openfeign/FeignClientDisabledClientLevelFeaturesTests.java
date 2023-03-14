@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2021 the original author or authors.
+ * Copyright 2021-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import feign.Capability;
 import feign.Contract;
 import feign.RequestLine;
 import feign.micrometer.MicrometerCapability;
+import feign.micrometer.MicrometerObservationCapability;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,8 +33,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.GetMapping;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,12 +41,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @author Jonatan Ivanov
  */
 @DirtiesContext
-@ActiveProfiles("no-foo-metrics")
+@ActiveProfiles("no-foo-micrometer")
 @SpringBootTest(classes = FeignClientDisabledClientLevelFeaturesTests.TestConfiguration.class)
 class FeignClientDisabledClientLevelFeaturesTests {
 
 	@Autowired
-	private FeignContext context;
+	private FeignClientFactory context;
 
 	@Autowired
 	private FooClient foo;
@@ -63,12 +63,15 @@ class FeignClientDisabledClientLevelFeaturesTests {
 	@Test
 	void capabilitiesShouldNotBeAvailableWhenDisabled() {
 		assertThat(context.getInstance("foo", MicrometerCapability.class)).isNull();
+		assertThat(context.getInstance("foo", MicrometerObservationCapability.class)).isNull();
 		assertThat(context.getInstances("foo", Capability.class)).isEmpty();
 
-		assertThat(context.getInstance("bar", MicrometerCapability.class)).isNotNull();
+		assertThat(context.getInstance("bar", MicrometerCapability.class)).isNull();
+		assertThat(context.getInstance("bar", MicrometerObservationCapability.class)).isNotNull();
 		Map<String, Capability> barCapabilities = context.getInstances("bar", Capability.class);
 		assertThat(barCapabilities).hasSize(2);
-		assertThat(barCapabilities.get("micrometerCapability")).isExactlyInstanceOf(MicrometerCapability.class);
+		assertThat(barCapabilities.get("micrometerObservationCapability"))
+				.isExactlyInstanceOf(MicrometerObservationCapability.class);
 		assertThat(barCapabilities.get("noOpCapability")).isExactlyInstanceOf(NoOpCapability.class);
 	}
 
@@ -83,7 +86,7 @@ class FeignClientDisabledClientLevelFeaturesTests {
 	@FeignClient(name = "bar", url = "https://bar", configuration = BarConfiguration.class)
 	interface BarClient {
 
-		@RequestMapping(value = "/", method = RequestMethod.GET)
+		@GetMapping("/")
 		String get();
 
 	}
